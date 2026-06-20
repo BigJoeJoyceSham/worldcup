@@ -31,7 +31,18 @@ except Exception:  # pragma: no cover - fall back to Plotly
     _HAS_ECHARTS = False
 
 st.set_page_config(page_title="World Cup 2026 Predictions", page_icon="⚽",
-                   layout="wide", initial_sidebar_state="collapsed")
+                   layout="wide", initial_sidebar_state="collapsed",
+                   # Blank out the menu entries that would otherwise deep-link to
+                   # the GitHub repo ("Report a bug" / "View source").
+                   menu_items={"Get Help": None, "Report a bug": None,
+                               "About": "World Cup 2026 Predictions"})
+
+# Belt-and-suspenders: hide the top-right toolbar (Deploy button + the source/
+# GitHub badge Streamlit Cloud injects) via CSS, on top of toolbarMode=minimal.
+st.markdown(
+    "<style>[data-testid='stToolbar']{display:none !important;}"
+    "[data-testid='stStatusWidget']{display:none !important;}</style>",
+    unsafe_allow_html=True)
 
 # Navy / accent palette, plus one stable colour per player for every chart.
 C = {"navy": "#1E3A5F", "red": "#DC2626", "amber": "#F59E0B",
@@ -378,9 +389,7 @@ def _row_highlight(row, me, leader):
 # Sidebar
 # --------------------------------------------------------------------------- #
 st.sidebar.title("🛠️ Dev controls")
-st.sidebar.info("This sidebar is for **bug-fixing / dev controls** only — "
-                "data source, live API toggle, refresh. It's collapsed by "
-                "default; the league view lives in the main tabs.")
+st.sidebar.info("dev/bug fixing only")
 source = st.sidebar.radio("Predictions source", ["live", "snapshot"],
                           format_func=lambda s: {"live": "🔄 Live Google Sheet",
                                                  "snapshot": "💾 Local snapshot"}[s])
@@ -432,9 +441,8 @@ st.title("⚽ WC 2026 Predictions there Boyz")
 
 # Player tab temporarily disabled (WIP) — re-add ":material/person: Player" to
 # the list and unpack `tab_player` to restore it. See the `if False:` block below.
-tab_table, tab_heat, tab_mdc = st.tabs(
-    [":material/leaderboard: Table", ":material/grid_view: Heatmap",
-     ":material/stadium: Matchday Center"])
+tab_table, tab_mdc = st.tabs(
+    [":material/leaderboard: Table", ":material/stadium: Matchday Center"])
 
 # --------------------------------------------------------------------------- #
 # Live Table
@@ -504,10 +512,8 @@ with tab_table:
         st.plotly_chart(_plotly_lines(df, "rank", reverse=True, title="Position"),
                         width="stretch")
 
-# --------------------------------------------------------------------------- #
-# Heatmap
-# --------------------------------------------------------------------------- #
-with tab_heat:
+    # ---- Heatmap: points by player (merged in under the race chart) ------ #
+    st.divider()
     st.subheader(":material/grid_view: Points by player")
     by = st.radio("Group by", ["By match", "By matchday"], horizontal=True,
                   label_visibility="collapsed")

@@ -1,5 +1,11 @@
 # App theme for the WC 2026 Pool dashboard.
 # Navy primary to match the chart palette; clean light surface.
+
+# Hide the dev toolbar: no "Deploy" button and no "View source / GitHub" menu
+# items, so viewers can't click through to the source repo.
+[client]
+toolbarMode = "minimal"
+
 [theme]
 base = "light"
 primaryColor = "#1E3A5F"

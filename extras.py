@@ -188,9 +188,11 @@ def build_recap(df: pd.DataFrame, players: list[str],
         n_concluded = n_games
 
     # 3) Sharpshooters (exact scores today) — names grouped by count, one line.
+    #    The "Innocent Boys" jibe only lands when NOBODY scored at all (no exacts
+    #    AND no correct outcomes); if some got the result right it's not 8 of them.
     if len(exacts):
         lines.append("🎯 " + _names_by_count(exacts, "Spot on", hattrick=True))
-    elif n_concluded >= 1:
+    elif n_concluded >= 1 and len(outcomes) == 0:
         lines.append(f"🙈 {len(players)} Innocent Boys tell truth")
 
     # 4) Correct outcomes today (right result, not exact) — names grouped.
