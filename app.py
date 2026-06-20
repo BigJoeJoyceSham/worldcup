@@ -30,7 +30,8 @@ try:
 except Exception:  # pragma: no cover - fall back to Plotly
     _HAS_ECHARTS = False
 
-st.set_page_config(page_title="World Cup 2026 Predictions", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="World Cup 2026 Predictions", page_icon="⚽",
+                   layout="wide", initial_sidebar_state="collapsed")
 
 # Navy / accent palette, plus one stable colour per player for every chart.
 C = {"navy": "#1E3A5F", "red": "#DC2626", "amber": "#F59E0B",
@@ -376,7 +377,10 @@ def _row_highlight(row, me, leader):
 # --------------------------------------------------------------------------- #
 # Sidebar
 # --------------------------------------------------------------------------- #
-st.sidebar.title("⚽ WC 2026 Predictions there Boyz")
+st.sidebar.title("🛠️ Dev controls")
+st.sidebar.info("This sidebar is for **bug-fixing / dev controls** only — "
+                "data source, live API toggle, refresh. It's collapsed by "
+                "default; the league view lives in the main tabs.")
 source = st.sidebar.radio("Predictions source", ["live", "snapshot"],
                           format_func=lambda s: {"live": "🔄 Live Google Sheet",
                                                  "snapshot": "💾 Local snapshot"}[s])
@@ -423,6 +427,8 @@ n_played = int(df[df.player == PLAYERS[0]]["played"].sum())
 st.sidebar.caption(f"Predictions: {df.attrs.get('origin', '?')}")
 st.sidebar.caption(f"Results: {df.attrs.get('results_origin', '?')}")
 st.sidebar.caption(f"{n_played} matches played · {df['match_id'].nunique()} scheduled")
+
+st.title("⚽ WC 2026 Predictions there Boyz")
 
 # Player tab temporarily disabled (WIP) — re-add ":material/person: Player" to
 # the list and unpack `tab_player` to restore it. See the `if False:` block below.
