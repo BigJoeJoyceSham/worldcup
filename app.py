@@ -702,7 +702,10 @@ with tab_mdc:
         odds = title_odds(standings_table(df, PLAYERS)[0])
         st.markdown("**:material/casino: Latest odds** &nbsp;"
                     "<span style='color:#6B7280;font-weight:400;font-size:0.85rem'>"
-                    "source: Patrick Power (feed delayed 15 mins)</span>",
+                    "source: Patrick Power (feed delayed 15 mins)</span>"
+                    "<span style='display:block;line-height:1;margin-top:-4px;"
+                    "color:#9CA3AF;font-weight:400;font-size:0.7rem'>"
+                    "Please Gamble Responsibly</span>",
                     unsafe_allow_html=True)
         ocols = st.columns(len(odds))
         for col, (pl, price) in zip(ocols, odds.items()):
