@@ -570,11 +570,10 @@ with tab_table:
         _share_cards(time_at_bottom(df, PLAYERS), table.iloc[-1]["Player"],
                      "vs loser", ["💩💩💩", "💩💩", "💩"])
 
-    try:
-        from streamlit_extras.metric_cards import style_metric_cards
-        style_metric_cards(border_left_color=C["navy"], box_shadow=True)
-    except Exception:
-        pass
+    # NB: deliberately *not* calling streamlit_extras.style_metric_cards here —
+    # it injects global CSS (navy border + shadow) onto every st.metric in the
+    # app. We prefer Streamlit's plain default cards (the look on the cloud
+    # deploy, where streamlit_extras isn't installed).
 
     # ---- Combined race + bump (shared legend, animates on open) --------- #
     if _HAS_ECHARTS:
