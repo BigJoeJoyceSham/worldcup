@@ -14,6 +14,7 @@ with no change here.
 from __future__ import annotations
 
 import os
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.express as px
@@ -70,12 +71,12 @@ DISPLAY_TZ = dl.DISPLAY_TZ
 MATCHDAY_TZ = dl.MATCHDAY_TZ
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def workbook_bytes(source: str) -> bytes:
-    """Download the predictions workbook once an hour and share the raw bytes
-    across every loader. Fixtures/predictions change rarely and live scores come
-    from the API, so neither cold start nor the 2-min live refresh needs to
-    re-fetch the Sheet — they reuse these cached bytes."""
+    """Download the predictions workbook every 5 minutes and share the raw bytes
+    across every loader. Short TTL so predictions entered in the Sheet on a
+    matchday morning surface promptly (people submit picks right up to kickoff);
+    live scores still come from the API, not a re-fetch."""
     return dl._read_workbook("live" if source == "live" else SNAPSHOT)
 
 
@@ -134,7 +135,10 @@ def cache_bucket(live: bool, now: pd.Timestamp) -> str:
     load per visit until the day rolls or 'Refresh now')."""
     if live:
         return f"live-{int(now.timestamp()) // LIVE_TTL}"
-    return f"day-{now:%Y%m%d}"
+    # Off the live window, refresh on a 5-min slot (not once per day) so
+    # predictions entered in the Sheet show up the same matchday without a
+    # manual refresh.
+    return f"slot-{int(now.timestamp()) // 300}"
 
 
 def color_map(players: list[str]) -> dict[str, str]:
@@ -425,13 +429,16 @@ def title_odds(table: pd.DataFrame) -> dict[str, str]:
     Leader: firms up the more daylight they have over 2nd place — 1/2 (>5 clear),
     5/6 (>3), 6/4 (>2), 15/8 (1–2 clear), 2/1 (level at the top).
     Chasers: 2/1 level with the leader, 5/2 one back, then drift out convexly so
-    each further point behind costs progressively more.
+    each further point behind costs progressively more. When two-plus share the
+    lead, chasers must overhaul more than one rival, so their prices drift out a
+    touch further (more co-leaders → longer).
     Reddy: a standing joke — always 100/1.
     """
     players = list(table["Player"])
     pts = [int(x) for x in table["Pts"]]
     lead = pts[0]
     second = pts[1] if len(pts) > 1 else lead
+    n_top = pts.count(lead)  # how many share the summit
     odds: dict[str, str] = {}
     for i, pl in enumerate(players):
         if pl == "Reddy":
@@ -454,6 +461,10 @@ def title_odds(table: pd.DataFrame) -> dict[str, str]:
             # Anchored at 2/1 (d=0) and 5/2 (d=1); the d·(d−1) term is zero at
             # both anchors and adds simple convexity beyond them.
             price = 2 + 0.5 * d + 0.25 * d * (d - 1)
+            # Strictly behind and the lead is shared? Nudge the price out a
+            # little for each extra co-leader to climb over (≈15% per rival).
+            if d > 0 and n_top >= 2:
+                price *= 1 + 0.15 * (n_top - 1)
             odds[pl] = _snap_odds(price)
     return odds
 
@@ -492,6 +503,7 @@ if in_window:
     st.sidebar.caption("⚡ Scores refresh every 2 min")
 
 if st.sidebar.button("Refresh now", width="stretch"):
+    workbook_bytes.clear()  # force a fresh Sheet download, not just a re-parse
     get_data.clear()
     kickoff_times.clear()
 
@@ -506,6 +518,20 @@ PLAYERS = dl.players(df)
 CMAP = color_map(PLAYERS)
 ME = None  # no "you" highlight — the leader is the only emphasised row/line
 n_played = int(df[df.player == PLAYERS[0]]["played"].sum())
+
+
+def revealed_matchdays(frame: pd.DataFrame) -> list[tuple[int, pd.Timestamp]]:
+    """Matchdays whose 12:00 UK reveal time has passed, as (number, date).
+
+    A matchday becomes 'current' — and selectable — from midday UK on its own
+    date; future matchdays are hidden until then. Numbered chronologically
+    against the full schedule so the count tracks the real matchday number."""
+    days = sorted(pd.Timestamp(d) for d in frame["match_day"].dropna().unique())
+    now_uk = pd.Timestamp.now(tz=ZoneInfo("Europe/London"))
+    return [(i + 1, d) for i, d in enumerate(days)
+            if d.tz_localize("Europe/London") + pd.Timedelta(hours=12) <= now_uk]
+
+
 st.sidebar.caption(f"Predictions: {df.attrs.get('origin', '?')}")
 st.sidebar.caption(f"Results: {df.attrs.get('results_origin', '?')}")
 st.sidebar.caption(f"{n_played} matches played · {df['match_id'].nunique()} scheduled")
@@ -523,12 +549,13 @@ tab_table, tab_mdc = st.tabs(
 with tab_table:
     table, md_cols, md_help = standings_table(df, PLAYERS)
     LEADER = table.iloc[0]["Player"]
-    rounds = extras.list_rounds(df)
+    current = revealed_matchdays(df)
+    md_now = current[-1][0] if current else 0
     total = df["match_id"].nunique()
     pct = round(100 * n_played / total) if total else 0
 
     # ---- "As it stands" banner ------------------------------------------ #
-    st.markdown(f"### :material/sports_soccer: As it Stands — Matchday {len(rounds)}")
+    st.markdown(f"### :material/sports_soccer: As it Stands — Matchday {md_now}")
     st.markdown(f"<span style='font-size:1.05rem;color:#6B7280'>"
                 f"{n_played} games played · {pct}% complete</span>",
                 unsafe_allow_html=True)
@@ -624,17 +651,15 @@ with tab_table:
 # --------------------------------------------------------------------------- #
 with tab_mdc:
     st.subheader(":material/stadium: Matchday Center")
-    rounds = extras.list_rounds(df)
+    # Only matchdays revealed so far (from 12:00 UK on their own date) — no
+    # future matchdays in the picker. Default to the latest revealed one.
+    rounds = revealed_matchdays(df)
     if not rounds:
-        st.info("No matches have been played yet — check back once results land.")
+        st.info("No matchday is live yet — check back from midday on the first matchday.")
     else:
-        rlabels = {idx: f"MD{idx} · {pd.Timestamp(d):%a %-d %b}" for idx, d in rounds}
-        # Default to today's ET match day if one exists, else the latest.
-        today_et = pd.Timestamp(now_et.date())
-        default_i = next((n for n, (_, d) in enumerate(rounds)
-                          if pd.Timestamp(d) == today_et), len(rounds) - 1)
+        rlabels = {idx: f"MD{idx} · {d:%a %-d %b}" for idx, d in rounds}
         sel = st.selectbox("Matchday", [idx for idx, _ in rounds],
-                           index=default_i, format_func=lambda i: rlabels[i])
+                           index=len(rounds) - 1, format_func=lambda i: rlabels[i])
         sel_date = dict(rounds)[sel]
 
         day = df[df["match_day"] == sel_date]
@@ -642,6 +667,7 @@ with tab_mdc:
         n_total = len(mids)
         n_played = int(day.groupby("match_id")["played"].first().sum())
         completed = n_played == n_total
+        has_pred = bool(day["has_prediction"].any())
 
 
         # ============================================================ #
@@ -651,18 +677,27 @@ with tab_mdc:
         #   Available vars: n_total, n_played, rlabels[sel] (e.g. "MD10 · Sat 20 Jun").
         # ============================================================ #
         matches_word = "match" if n_total == 1 else "matches"
+        first_ko = pd.to_datetime(day["datetime"]).min()
         if completed:
             lead = f"{n_total} {matches_word}" if n_total == 1 else f"all {n_total} {matches_word}"
             status_txt = f"✅ Completed · {lead} played"
         elif n_played == 0:
-            status_txt = f"⏰ Upcoming · {n_total} {matches_word}, none played yet"
+            status_txt = f"⏰ Kick Off {first_ko:%H:%M}"
         else:
             status_txt = f"🔴 In progress · {n_played} of {n_total} {matches_word} played"
-        st.caption(f"Results, **{rlabels[sel]}** &nbsp;·&nbsp; {status_txt}")
+        st.caption(f"Fixtures, **{rlabels[sel]}** &nbsp;·&nbsp; {status_txt}")
         # --- end COPY: status line --- #
 
         # ---- Matchday recap (deterministic, screenshot-ready) ----------- #
-        recap = extras.build_recap(df, PLAYERS, round_index=sel, me=ME)
+        # Recap is results-driven, so only build it once this matchday has at
+        # least one played game; upcoming matchdays get a lighter note instead.
+        recap = extras.build_recap(df, PLAYERS, round_index=sel, me=ME) if n_played else None
+        if not recap:
+            note = ("Predictions are locked in — fixtures below."
+                    if has_pred else
+                    "Predictions aren't uploaded yet — fixtures below, scores and "
+                    "recap will fill in once picks and results land.")
+            st.info(f"⏰ **{rlabels[sel]}** is still to come. {note}")
         if recap:
             try:
                 from streamlit_extras.stylable_container import stylable_container
