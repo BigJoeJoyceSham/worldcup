@@ -510,7 +510,7 @@ st.sidebar.caption(f"Predictions: {df.attrs.get('origin', '?')}")
 st.sidebar.caption(f"Results: {df.attrs.get('results_origin', '?')}")
 st.sidebar.caption(f"{n_played} matches played · {df['match_id'].nunique()} scheduled")
 
-st.title("⚽ WC 2026 Predictions there Boyz")
+st.title("⚽ World Cup 2026 Predictions there Boyz")
 
 # Player tab temporarily disabled (WIP) — re-add ":material/person: Player" to
 # the list and unpack `tab_player` to restore it. See the `if False:` block below.
