@@ -39,9 +39,17 @@ st.set_page_config(page_title="World Cup 2026 Predictions", page_icon="⚽",
 
 # Belt-and-suspenders: hide the top-right toolbar (Deploy button + the source/
 # GitHub badge Streamlit Cloud injects) via CSS, on top of toolbarMode=minimal.
+# Also force the sidebar permanently collapsed and not openable — the dev widgets
+# inside it still run server-side with their defaults (live source, API on), so
+# the app works; viewers just can't reach the controls.
 st.markdown(
-    "<style>[data-testid='stToolbar']{display:none !important;}"
-    "[data-testid='stStatusWidget']{display:none !important;}</style>",
+    "<style>"
+    "[data-testid='stToolbar']{display:none !important;}"
+    "[data-testid='stStatusWidget']{display:none !important;}"
+    "[data-testid='stSidebar']{display:none !important;}"
+    "[data-testid='stSidebarCollapsedControl']{display:none !important;}"
+    "[data-testid='collapsedControl']{display:none !important;}"
+    "</style>",
     unsafe_allow_html=True)
 
 # Navy / accent palette, plus one stable colour per player for every chart.
@@ -62,6 +70,15 @@ DISPLAY_TZ = dl.DISPLAY_TZ
 MATCHDAY_TZ = dl.MATCHDAY_TZ
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def workbook_bytes(source: str) -> bytes:
+    """Download the predictions workbook once an hour and share the raw bytes
+    across every loader. Fixtures/predictions change rarely and live scores come
+    from the API, so neither cold start nor the 2-min live refresh needs to
+    re-fetch the Sheet — they reuse these cached bytes."""
+    return dl._read_workbook("live" if source == "live" else SNAPSHOT)
+
+
 @st.cache_data(ttl=None, show_spinner="Pulling latest results…")
 def get_data(source: str, use_api: bool, bucket: str) -> pd.DataFrame:
     """Load the tidy long table. Predictions/fixtures come from the Sheet;
@@ -72,7 +89,7 @@ def get_data(source: str, use_api: bool, bucket: str) -> pd.DataFrame:
     during the live window (so scores refresh) and once per ET day otherwise
     (so an idle page never re-hammers the API). See ``cache_bucket``."""
     try:
-        df = dl.load_long("live" if source == "live" else SNAPSHOT, use_api=use_api)
+        df = dl.load_long(workbook_bytes(source), use_api=use_api)
         df.attrs["origin"] = "live Google Sheet" if source == "live" else "local snapshot"
         return df
     except Exception as exc:  # noqa: BLE001 - surface, then degrade gracefully
@@ -86,7 +103,7 @@ def kickoff_times(source: str) -> list[pd.Timestamp]:
     """Unique fixture kickoff times (UTC, naive). Pulled WITHOUT the live API —
     fixtures are stable — and cached an hour, so deciding whether we're in the
     live window never touches the flaky results feed."""
-    sched = dl.load_long("live" if source == "live" else SNAPSHOT, use_api=False)
+    sched = dl.load_long(workbook_bytes(source), use_api=False)
     return sorted(pd.Timestamp(t) for t in sched["datetime"].dropna().unique())
 
 
@@ -183,7 +200,8 @@ def standings_table(df: pd.DataFrame, players: list[str]):
     outcome = df[df["outcome_only"]].groupby("player").size()
 
     gained = p.groupby(["player", "md"])["points"].sum().unstack(fill_value=0)
-    md_nums = sorted(gained.columns)
+    # Reverse-chronological: most recent matchday first (MDn … MD1).
+    md_nums = sorted(gained.columns, reverse=True)
     gained = gained[md_nums]
     gained.columns = [f"MD{n}" for n in md_nums]
     dates = sorted(p["mdate"].unique())
@@ -383,6 +401,61 @@ def _row_highlight(row, me, leader):
     if row["Player"] == leader:
         return ["background-color:#FFF6E0;font-weight:700"] * len(row)
     return [""] * len(row)
+
+
+# Standard bookmaker price ladder (odds-to-1 as a decimal → fractional label),
+# capped below 100/1 so that infamous price stays Reddy's and Reddy's alone.
+_ODDS_LADDER = [
+    (2, "2/1"), (2.5, "5/2"), (3, "3/1"), (3.5, "7/2"), (4, "4/1"),
+    (4.5, "9/2"), (5, "5/1"), (6, "6/1"), (7, "7/1"), (8, "8/1"),
+    (9, "9/1"), (10, "10/1"), (12, "12/1"), (14, "14/1"), (16, "16/1"),
+    (20, "20/1"), (25, "25/1"), (33, "33/1"), (40, "40/1"), (50, "50/1"),
+    (66, "66/1"), (80, "80/1"),
+]
+
+
+def _snap_odds(value: float) -> str:
+    """Nearest standard fractional price to a decimal odds-to-1 figure."""
+    return min(_ODDS_LADDER, key=lambda lp: abs(lp[0] - value))[1]
+
+
+def title_odds(table: pd.DataFrame) -> dict[str, str]:
+    """Win-the-whole-thing prices, table sorted best-first.
+
+    Leader: firms up the more daylight they have over 2nd place — 1/2 (>5 clear),
+    5/6 (>3), 6/4 (>2), 15/8 (1–2 clear), 2/1 (level at the top).
+    Chasers: 2/1 level with the leader, 5/2 one back, then drift out convexly so
+    each further point behind costs progressively more.
+    Reddy: a standing joke — always 100/1.
+    """
+    players = list(table["Player"])
+    pts = [int(x) for x in table["Pts"]]
+    lead = pts[0]
+    second = pts[1] if len(pts) > 1 else lead
+    odds: dict[str, str] = {}
+    for i, pl in enumerate(players):
+        if pl == "Reddy":
+            odds[pl] = "100/1"
+            continue
+        if i == 0:
+            cushion = lead - second  # points clear of the field
+            if cushion > 5:
+                odds[pl] = "1/2"
+            elif cushion > 3:
+                odds[pl] = "5/6"
+            elif cushion > 2:
+                odds[pl] = "6/4"
+            elif cushion >= 1:
+                odds[pl] = "15/8"
+            else:
+                odds[pl] = "2/1"  # level at the summit
+        else:
+            d = lead - pts[i]  # points behind the leader
+            # Anchored at 2/1 (d=0) and 5/2 (d=1); the d·(d−1) term is zero at
+            # both anchors and adds simple convexity beyond them.
+            price = 2 + 0.5 * d + 0.25 * d * (d - 1)
+            odds[pl] = _snap_odds(price)
+    return odds
 
 
 # --------------------------------------------------------------------------- #
@@ -625,6 +698,16 @@ with tab_mdc:
                     unsafe_allow_html=True)
                 st.markdown("  \n".join(recap["lines"]))
                 # --- end COPY: recap card --- #
+
+        # ---- Latest odds: each player's price to win it outright ---------- #
+        odds = title_odds(standings_table(df, PLAYERS)[0])
+        st.markdown("**:material/casino: Latest odds** &nbsp;"
+                    "<span style='color:#6B7280;font-weight:400;font-size:0.85rem'>"
+                    "source: Patrick Power (feed delayed 15 mins)</span>",
+                    unsafe_allow_html=True)
+        ocols = st.columns(len(odds))
+        for col, (pl, price) in zip(ocols, odds.items()):
+            col.metric(pl, price)
 
         st.divider()
         # ============================================================ #

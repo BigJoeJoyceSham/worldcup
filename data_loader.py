@@ -157,7 +157,11 @@ def stage_of(raw: str) -> str:
 
 
 def _read_workbook(source: str | bytes | None) -> bytes:
-    """Return raw xlsx bytes from a local path or the live export URL."""
+    """Return raw xlsx bytes from pre-fetched bytes, a local path, or the live
+    export URL. Accepting bytes lets callers download the workbook once and pass
+    it to multiple load_long() calls instead of re-fetching each time."""
+    if isinstance(source, (bytes, bytearray)):
+        return bytes(source)
     if source and not str(source).startswith("http") and source != "live":
         with open(source, "rb") as fh:
             return fh.read()
@@ -178,12 +182,12 @@ def load_long(source: str | None = "live", use_api: bool = True) -> pd.DataFrame
     silently fall back to the scores recorded in the Sheet.
     """
     raw = _read_workbook(source)
-    buf = io.BytesIO(raw)
+    # Parse the workbook ONCE. Calling pd.read_excel per sheet re-parses the
+    # whole file each time (openpyxl), which was ~13s for 9 sheets; ExcelFile
+    # loads it a single time and every .parse() reuses that.
+    xls = pd.ExcelFile(io.BytesIO(raw), engine="openpyxl")
 
-    results = (
-        pd.read_excel(buf, sheet_name="Results", header=None)
-        .rename(columns=_R_COLS)
-    )
+    results = xls.parse("Results", header=None).rename(columns=_R_COLS)
     results["match_id"] = range(1, len(results) + 1)
     results["stage"] = results["stage_raw"].map(stage_of)
     results["played"] = results["actual_home"].notna() & results["actual_away"].notna()
@@ -199,8 +203,7 @@ def load_long(source: str | None = "live", use_api: bool = True) -> pd.DataFrame
 
     frames = []
     for player in PLAYERS:
-        buf.seek(0)
-        p = pd.read_excel(buf, sheet_name=player, header=None).rename(columns=_P_COLS)
+        p = xls.parse(player, header=None).rename(columns=_P_COLS)
         # Drop the blank leading row; remaining rows align 1:1 with Results.
         p = p.iloc[1:].reset_index(drop=True)
         p = p.iloc[: len(results)].copy()
