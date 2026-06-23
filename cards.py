@@ -88,6 +88,9 @@ CSS = """
    neutral categorical palette so a 100% segment reads as "unanimous", not "wrong". */
 .wc-h{background:#1E3A5F;} .wc-d{background:#64748B;} .wc-a{background:#0D9488;}
 .wc-legend{color:#6B7280;font-size:.82rem;margin-top:6px;}
+/* tiny colour swatch in the tally line — pair with .wc-h/.wc-d/.wc-a for the fill */
+.wc-sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;
+  vertical-align:baseline;}
 .wc-chips{margin-top:14px;display:flex;flex-wrap:wrap;gap:7px;}
 .wc-chip{font-size:.85rem;border-radius:999px;padding:3px 11px;border:1px solid;
   white-space:nowrap;}
@@ -180,8 +183,10 @@ def match_card_html(rows: pd.DataFrame) -> str:
                         f"{_pct(n, s['total']):.0f}%</div>")
     bar = f"<div class='wc-bar'>{''.join(segs)}</div>" if segs else ""
     # ✏️ COPY (3) — tally line beneath the bar.
-    legend = (f"<div class='wc-legend'>{home} win {s['home']} · Draw {s['draw']} · "
-              f"{away} win {s['away']}"
+    legend = (f"<div class='wc-legend'>"
+              f"<span class='wc-sw wc-h'></span>{home} win {s['home']} · "
+              f"<span class='wc-sw wc-d'></span>Draw {s['draw']} · "
+              f"<span class='wc-sw wc-a'></span>{away} win {s['away']}"
               + (f" · {s['blank']} no pick" if s["blank"] else "")
               + f" &nbsp;·&nbsp; most-picked score <b>{_html.escape(str(s['modal']))}</b></div>")
 
