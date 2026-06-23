@@ -423,11 +423,23 @@ def _snap_odds(value: float) -> str:
     return min(_ODDS_LADDER, key=lambda lp: abs(lp[0] - value))[1]
 
 
+# Leader price by cushion (points clear of 2nd). Descending thresholds: the
+# bigger the daylight over the pack, the shorter the price — driving on past
+# 1/2 into odds-on territory for a runaway leader. First row whose min-cushion
+# the leader clears wins.
+_LEADER_LADDER = [
+    (20, "1/6"), (16, "1/5"), (13, "1/4"), (10, "1/3"), (8, "2/5"),
+    (6, "1/2"), (4, "5/6"), (3, "6/4"), (1, "15/8"), (0, "2/1"),
+]
+
+
 def title_odds(table: pd.DataFrame) -> dict[str, str]:
     """Win-the-whole-thing prices, table sorted best-first.
 
-    Leader: firms up the more daylight they have over 2nd place — 1/2 (>5 clear),
-    5/6 (>3), 6/4 (>2), 15/8 (1–2 clear), 2/1 (level at the top).
+    Leader: firms up the more daylight they have over 2nd place, driving into
+    odds-on territory for a runaway lead — 2/1 (level), 15/8 (1–2 clear),
+    6/4 (3), 5/6 (4–5), 1/2 (6–7), and shorter still up to 1/6 (20+ clear).
+    See _LEADER_LADDER for the full scale.
     Chasers: 2/1 level with the leader, 5/2 one back, then drift out convexly so
     each further point behind costs progressively more. When two-plus share the
     lead, chasers must overhaul more than one rival, so their prices drift out a
@@ -446,16 +458,10 @@ def title_odds(table: pd.DataFrame) -> dict[str, str]:
             continue
         if i == 0:
             cushion = lead - second  # points clear of the field
-            if cushion > 5:
-                odds[pl] = "1/2"
-            elif cushion > 3:
-                odds[pl] = "5/6"
-            elif cushion > 2:
-                odds[pl] = "6/4"
-            elif cushion >= 1:
-                odds[pl] = "15/8"
-            else:
-                odds[pl] = "2/1"  # level at the summit
+            # Shorter the further clear of the pack — first ladder row the
+            # cushion clears (rows are sorted biggest-cushion first).
+            odds[pl] = next(label for floor, label in _LEADER_LADDER
+                            if cushion >= floor)
         else:
             d = lead - pts[i]  # points behind the leader
             # Anchored at 2/1 (d=0) and 5/2 (d=1); the d·(d−1) term is zero at
