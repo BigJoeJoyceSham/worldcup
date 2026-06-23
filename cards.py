@@ -84,7 +84,9 @@ CSS = """
 .wc-bar{display:flex;height:30px;border-radius:8px;overflow:hidden;
   font-size:.8rem;font-weight:700;color:#fff;}
 .wc-bar .seg{display:flex;align-items:center;justify-content:center;min-width:34px;}
-.wc-h{background:#16A34A;} .wc-d{background:#F59E0B;} .wc-a{background:#DC2626;}
+/* home/draw/away = three outcomes the pool picked, NOT good/bad — use a
+   neutral categorical palette so a 100% segment reads as "unanimous", not "wrong". */
+.wc-h{background:#1E3A5F;} .wc-d{background:#64748B;} .wc-a{background:#0D9488;}
 .wc-legend{color:#6B7280;font-size:.82rem;margin-top:6px;}
 .wc-chips{margin-top:14px;display:flex;flex-wrap:wrap;gap:7px;}
 .wc-chip{font-size:.85rem;border-radius:999px;padding:3px 11px;border:1px solid;
