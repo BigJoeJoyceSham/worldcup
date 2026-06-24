@@ -1,15 +1,11 @@
 """World Cup 2026 predictions dashboard.
 
-Five views over the friends-league prediction pool:
-  Live Table  - leaderboard with movement + form
-  Title Race  - animated cumulative-points race + bump (rank) chart
-  Heatmap     - players x matches, coloured by points won
-  Match       - every player's prediction vs the actual result, one game
-  Player      - a single player's profile, tendencies and breakdown
+Two tabs over the friends-league prediction pool:
+  Table           - standings, the animated points race + rank bump, heatmap
+  Matchday Center - per-matchday recap, title odds, and fixture cards
 
-Data comes from the shared Google Sheet via data_loader.load_long(). A live
-score feed (API / scrape) can later replace the Results half of that loader
-with no change here.
+Data comes from the shared Google Sheet via data_loader.load_long(); the live
+score feed can replace the Results half of that loader with no change here.
 """
 from __future__ import annotations
 
@@ -149,15 +145,12 @@ def color_map(players: list[str]) -> dict[str, str]:
 def played_order(df: pd.DataFrame) -> pd.DataFrame:
     """Played matches with a sequential play-order index (1..N) by kickoff.
 
-    Cached: pure function of ``df`` (which only changes when ``get_data``'s
-    cache refreshes), but called on several tabs every rerun — recomputing it
-    each time was wasted work."""
+    Cached: a pure function of ``df``, but called on several tabs each rerun."""
     played = df[df["played"]].copy()
     order = (played[["match_id", "datetime"]].drop_duplicates()
              .sort_values("datetime").reset_index(drop=True))
     order["play_order"] = range(1, len(order) + 1)
-    order["label"] = order["play_order"].astype(str)
-    return played.merge(order[["match_id", "play_order", "label"]], on="match_id")
+    return played.merge(order[["match_id", "play_order"]], on="match_id")
 
 
 @st.cache_data(show_spinner=False)
@@ -231,24 +224,18 @@ def standings_table(df: pd.DataFrame, players: list[str]):
 
 
 @st.cache_data(show_spinner=False)
-def time_at_top(df: pd.DataFrame, players: list[str]) -> pd.Series:
-    """Share (%) of played matches each player has spent in outright 1st place,
-    measured across the cumulative-points race."""
+def time_share(df: pd.DataFrame, players: list[str], at: str) -> pd.Series:
+    """Share (%) of played matches each player spent at the top (``at="top"``,
+    outright 1st) or bottom (``at="bottom"``, worst rank — bottom ties all
+    count), measured across the cumulative-points race."""
     grid = cumulative(df)
     steps = grid["play_order"].nunique()
-    share = grid[grid["rank"] == 1].groupby("player").size() / steps * 100
-    return share.reindex(players).fillna(0.0)
-
-
-@st.cache_data(show_spinner=False)
-def time_at_bottom(df: pd.DataFrame, players: list[str]) -> pd.Series:
-    """Share (%) of played matches each player has spent in last place (the
-    worst rank at that point — ties at the bottom all count)."""
-    grid = cumulative(df).copy()
-    steps = grid["play_order"].nunique()
-    grid["worst"] = grid.groupby("play_order")["rank"].transform("max")
-    bottom = grid[grid["rank"] == grid["worst"]]
-    share = bottom.groupby("player").size() / steps * 100
+    if at == "top":
+        held = grid[grid["rank"] == 1]
+    else:
+        worst = grid.groupby("play_order")["rank"].transform("max")
+        held = grid[grid["rank"] == worst]
+    share = held.groupby("player").size() / steps * 100
     return share.reindex(players).fillna(0.0)
 
 
@@ -408,7 +395,7 @@ def _row_highlight(row, me, leader):
 
 
 # Standard bookmaker price ladder (odds-to-1 as a decimal → fractional label),
-# capped below 100/1 so that infamous price stays Reddy's and Reddy's alone.
+# capped at 80/1 so Reddy's joke 99/1 stays his and his alone.
 _ODDS_LADDER = [
     (2, "2/1"), (2.5, "5/2"), (3, "3/1"), (3.5, "7/2"), (4, "4/1"),
     (4.5, "9/2"), (5, "5/1"), (6, "6/1"), (7, "7/1"), (8, "8/1"),
@@ -444,7 +431,7 @@ def title_odds(table: pd.DataFrame) -> dict[str, str]:
     each further point behind costs progressively more. When two-plus share the
     lead, chasers must overhaul more than one rival, so their prices drift out a
     touch further (more co-leaders → longer).
-    Reddy: a standing joke — always 100/1.
+    Reddy: a standing joke — always 99/1.
     """
     players = list(table["Player"])
     pts = [int(x) for x in table["Pts"]]
@@ -454,7 +441,7 @@ def title_odds(table: pd.DataFrame) -> dict[str, str]:
     odds: dict[str, str] = {}
     for i, pl in enumerate(players):
         if pl == "Reddy":
-            odds[pl] = "100/1"
+            odds[pl] = "99/1"
             continue
         if i == 0:
             cushion = lead - second  # points clear of the field
@@ -544,8 +531,6 @@ st.sidebar.caption(f"{n_played} matches played · {df['match_id'].nunique()} sch
 
 st.title("⚽ World Cup 2026 Predictions there Boyz")
 
-# Player tab temporarily disabled (WIP) — re-add ":material/person: Player" to
-# the list and unpack `tab_player` to restore it. See the `if False:` block below.
 tab_table, tab_mdc = st.tabs(
     [":material/leaderboard: Table", ":material/stadium: Matchday Center"])
 
@@ -596,11 +581,11 @@ with tab_table:
 
     with st.expander("Time at the top & bottom", expanded=False):
         st.markdown("**:material/trending_up: Most time in front**")
-        _share_cards(time_at_top(df, PLAYERS), LEADER, "vs leader",
+        _share_cards(time_share(df, PLAYERS, "top"), LEADER, "vs leader",
                      ["🥇", "🥈", "🥉"])
 
         st.markdown("**:material/trending_down: Most time at the bottom**")
-        _share_cards(time_at_bottom(df, PLAYERS), table.iloc[-1]["Player"],
+        _share_cards(time_share(df, PLAYERS, "bottom"), table.iloc[-1]["Player"],
                      "vs loser", ["💩💩💩", "💩💩", "💩"])
 
     # NB: deliberately *not* calling streamlit_extras.style_metric_cards here —
@@ -675,13 +660,7 @@ with tab_mdc:
         completed = n_played == n_total
         has_pred = bool(day["has_prediction"].any())
 
-
-        # ============================================================ #
-        # ✏️ COPY — Matchday status line
-        #   status_txt: the done / in-progress / upcoming pill text.
-        #   st.caption: the one-line description under the picker.
-        #   Available vars: n_total, n_played, rlabels[sel] (e.g. "MD10 · Sat 20 Jun").
-        # ============================================================ #
+        # Matchday status pill: done / in-progress / upcoming.
         matches_word = "match" if n_total == 1 else "matches"
         first_ko = pd.to_datetime(day["datetime"]).min()
         if completed:
@@ -692,11 +671,8 @@ with tab_mdc:
         else:
             status_txt = f"🔴 In progress · {n_played} of {n_total} {matches_word} played"
         st.caption(f"Fixtures, **{rlabels[sel]}** &nbsp;·&nbsp; {status_txt}")
-        # --- end COPY: status line --- #
 
-        # ---- Matchday recap (deterministic, screenshot-ready) ----------- #
-        # Recap is results-driven, so only build it once this matchday has at
-        # least one played game; upcoming matchdays get a lighter note instead.
+        # Matchday recap — results-driven, so only once a game has been played.
         recap = extras.build_recap(df, PLAYERS, round_index=sel, me=ME) if n_played else None
         if not recap:
             note = ("Predictions are locked in — fixtures below."
@@ -718,15 +694,8 @@ with tab_mdc:
             except Exception:
                 card = st.container(border=True)
             with card:
-                # ==================================================== #
-                # ✏️ COPY — Recap card header
-                #   tag: the "X of Y games played" subtitle.
-                #   The "{recap['title']} so far" headline (📣 line).
-                #   recap['lines'] themselves are generated in extras.py
-                #   build_recap() — edit that function to reword them.
-                # ==================================================== #
-                # Count the played matches (n_played), not just games that
-                # scored, so this lines up with the fixtures shown below.
+                # Count played matches (not just scored games) so this matches
+                # the fixtures listed below.
                 if completed:
                     tag = f"{n_total} games"
                 else:
@@ -737,9 +706,10 @@ with tab_mdc:
                     f"{recap['date_label']} · {tag}</span>",
                     unsafe_allow_html=True)
                 st.markdown("  \n".join(recap["lines"]))
-                # --- end COPY: recap card --- #
 
-        # ---- Latest odds: each player's price to win it outright ---------- #
+        # Latest odds: each player's price to win it outright. Reddy alone
+        # carries a delta — the running gag that his eternal 100/1 finally
+        # "shortened" to 99/1 (green -1, inverse colour).
         odds = title_odds(standings_table(df, PLAYERS)[0])
         st.markdown("**:material/casino: Latest odds** &nbsp;"
                     "<span style='color:#6B7280;font-weight:400;font-size:0.85rem'>"
@@ -750,70 +720,15 @@ with tab_mdc:
                     unsafe_allow_html=True)
         ocols = st.columns(len(odds))
         for col, (pl, price) in zip(ocols, odds.items()):
-            col.metric(pl, price)
+            if pl == "Reddy":
+                col.metric(pl, price, delta="-1", delta_color="inverse")
+            else:
+                col.metric(pl, price)
 
         st.divider()
-        # ============================================================ #
-        # ✏️ COPY — Fixtures section heading + caption
-        #   The "#### Fixtures & predictions" heading.
-        #   st.caption: the one-liner explaining what each box shows.
-        #   (Per-box wording lives in cards.py match_card_html — see the
-        #    "✏️ COPY" markers there.)
-        # ============================================================ #
         st.markdown("#### :material/sports_soccer: Fixtures & predictions")
         st.caption(f"{n_total} match{'es' if n_total != 1 else ''} this matchday")
-        # --- end COPY: fixtures heading --- #
         st.markdown(cardui.CSS, unsafe_allow_html=True)
         for mid in mids:
             st.markdown(cardui.match_card_html(df[df.match_id == int(mid)]),
                         unsafe_allow_html=True)
-
-# --------------------------------------------------------------------------- #
-# Player profile  — TEMPORARILY DISABLED (WIP). To re-enable: restore the
-# `tab_player` tab above and change `if False:` back to `with tab_player:`.
-# --------------------------------------------------------------------------- #
-if False:  # noqa: SIM223 - parked tab, intentionally not rendered for now
-    st.subheader(":material/person: Player profile")
-    who = st.selectbox("Player", PLAYERS,
-                       index=PLAYERS.index("Kian") if "Kian" in PLAYERS else 0)
-    pl = df[df.player == who]
-    plp = pl[pl.played]
-    grid = cumulative(df)
-    rank_now = int(grid[(grid.player == who) & (grid.play_order == grid.play_order.max())]["rank"].iloc[0])
-
-    played_all = df[df.played]
-    stats = pd.DataFrame({
-        "points": played_all.groupby("player")["points"].sum(),
-        "exact": played_all.groupby("player")["exact_hit"].sum(),
-        "outcome": played_all.groupby("player")["outcome_only"].sum(),
-        "miss": played_all.groupby("player")["miss"].sum(),
-    }).reindex(PLAYERS).fillna(0)
-    st.markdown(cardui.CSS, unsafe_allow_html=True)
-    st.markdown(cardui.stat_cards_html(cardui.player_stat_items(stats, who, rank_now)),
-                unsafe_allow_html=True)
-
-    left, right = st.columns([3, 2])
-    with left:
-        st.markdown("**Points by stage**")
-        by_stage = (plp.groupby("stage")["points"].sum().reset_index())
-        sfig = px.bar(by_stage, x="stage", y="points", text="points")
-        sfig.update_traces(marker_color=CMAP[who], textposition="outside")
-        sfig.update_layout(height=300, xaxis_title="", yaxis_title="Points")
-        st.plotly_chart(sfig, width="stretch")
-    with right:
-        st.markdown("**Predictor tendency**")
-        pred = plp[plp.has_prediction]
-        avg_goals = (pred["pred_home"] + pred["pred_away"]).mean()
-        draws = (pred["pred_home"] == pred["pred_away"]).mean() * 100
-        st.metric("Avg goals predicted / game", f"{avg_goals:.2f}")
-        st.metric("Draws predicted", f"{draws:.0f}%")
-        hit_rate = plp["exact_hit"].mean() * 100
-        st.metric("Exact-score hit rate", f"{hit_rate:.0f}%")
-
-    st.markdown("**Every prediction so far**")
-    show = plp[["home", "actual_score", "away", "pred_score", "points", "stage_raw"]].copy()
-    show = show.rename(columns={"home": "Home", "away": "Away",
-                                "actual_score": "Result", "pred_score": "Predicted",
-                                "points": "Pts", "stage_raw": "Stage"})
-    st.dataframe(show.sort_values("Pts", ascending=False),
-                 width="stretch", hide_index=True)
