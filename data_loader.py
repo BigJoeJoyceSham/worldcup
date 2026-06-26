@@ -239,12 +239,19 @@ def load_long(source: str | None = "live", use_api: bool = True) -> pd.DataFrame
             ah, aw, pl, lv = [], [], [], []
             for k_home, k_away, s_home, s_away, s_played in keys:
                 hit = api.get((k_home, k_away))
-                if hit is None:
-                    ah.append(s_home); aw.append(s_away)
-                    pl.append(bool(s_played)); lv.append(False)
-                else:
+                if hit is not None:
                     ah.append(hit[0]); aw.append(hit[1])
                     pl.append(hit[2]); lv.append(hit[3])
+                    continue
+                # The API and Sheet don't always agree on which side is home,
+                # so also try the swapped pairing and flip the scores back.
+                swapped = api.get((k_away, k_home))
+                if swapped is not None:
+                    ah.append(swapped[1]); aw.append(swapped[0])
+                    pl.append(swapped[2]); lv.append(swapped[3])
+                else:
+                    ah.append(s_home); aw.append(s_away)
+                    pl.append(bool(s_played)); lv.append(False)
             long["actual_home"], long["actual_away"] = ah, aw
             long["played"], long["live"] = pl, lv
             results_origin = "live API (worldcup26.ir), Sheet for unmatched"
