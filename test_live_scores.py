@@ -75,6 +75,19 @@ def test_join_key_survives_sheet_casing_inconsistency():
     assert sheet_key in api
 
 
+def test_display_spelling_prefers_majority_over_typo():
+    # "Ivory Coast" appears 3×, the typo "Ivory coast " once -> majority wins.
+    names = ["Ivory Coast", "Ivory Coast", "Ivory Coast", "Ivory coast "]
+    spell = dl._display_spellings(names)
+    assert spell[dl.canon("Ivory coast ")] == "Ivory Coast"
+
+
+def test_display_spelling_prefers_alias_pretty_form():
+    # An aliased team always renders as its pretty canonical form.
+    spell = dl._display_spellings(["turkey", "Türkiye"])
+    assert spell[dl.canon("turkey")] == "Türkiye"
+
+
 def test_et_match_day_straddles_uk_dates():
     import pandas as pd
     # UK 01:30 on 20 Jun is the prior ET evening (19 Jun); UK 18:00 stays 20 Jun.

@@ -148,19 +148,19 @@ def build_recap(df: pd.DataFrame, players: list[str],
             verb = (f"leaps to {_ordinal(r)}" if move.get(hero, 0) > 0
                     else (f"holds {_ordinal(r)}" if r <= 3 else f"climbs to {_ordinal(r)}"
                           if move.get(hero, 0) > 0 else f"sits {_ordinal(r)}"))
-            lines.append(f"🏅 Sham of the Match: **{hero} +{top_gain}** — {verb}.")
+            lines.append(f"🏅 the Small king: **{hero} +{top_gain}** — {verb}.")
         else:
             names = ", ".join(heroes)
-            lines.append(f"🏅 Sham of the Match: **{names}** — +{top_gain} each.")
+            lines.append(f"🏅 Small Kings: **{names}** — +{top_gain} each.")
 
-    # 3) Biggest rank climb (skip anyone already named Sham of the Match).
+    # 3) Biggest rank climb (skip anyone already named the Small king).
     if move.max() > 0:
         climber = move.sort_values(ascending=False).index[0]
         if climber not in heroes:
             lines.append(f"📈 **{climber}** up {int(move[climber])} to {_ordinal(int(rank_after[climber]))}.")
 
     # A game still in play isn't a verdict: only "shame" lines (nobody nailed it,
-    # stone-useless) fire once at least one game today has actually concluded
+    # in the bucket) fire once at least one game today has actually concluded
     # (FT, not live). With just a live first game up, scores aren't final yet.
     if "live" in today.columns and len(today):
         n_concluded = int(today[~today["live"].astype(bool)]["match_id"].nunique())
@@ -187,7 +187,9 @@ def build_recap(df: pd.DataFrame, players: list[str],
         names = ", ".join(blanks)
         again = (prev_date is not None
                  and all(gained_prev.get(p, 1) == 0 for p in blanks))
-        lines.append(f"🪦 **{names} Stone Useless**{' again' if again else ''}")
+        # One or many: "X[, Y] Shite in the bucket".
+        lines.append(f"🪣 **{names} Shite in the bucket**"
+                     f"{' for the past 3 months' if again else ''}")
 
     return {
         "round": idx,

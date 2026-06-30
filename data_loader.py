@@ -49,6 +49,22 @@ def canon(name) -> str:
     return _ALIASES.get(s.lower(), s).casefold()
 
 
+def _display_spellings(names) -> dict[str, str]:
+    """Map each canon join-key -> one tidy display spelling for a set of names.
+
+    The Sheet is hand-typed and inconsistent (e.g. "Ivory coast " vs "Ivory
+    Coast"). For each team we pick the pretty _ALIASES value when one exists,
+    otherwise the most common stripped spelling actually seen — so a one-off
+    typo yields to the majority spelling. Display only; joins use canon()."""
+    from collections import Counter
+    pretty = {v.casefold(): v for v in _ALIASES.values()}
+    counts: dict[str, Counter] = {}
+    for n in names:
+        counts.setdefault(canon(n), Counter())[str(n).strip()] += 1
+    return {key: pretty.get(key, c.most_common(1)[0][0])
+            for key, c in counts.items()}
+
+
 # Fixture clocks are stored/displayed in UK local time, but the tournament is in
 # the US, so a "match day" is a 24h calendar day in New York time. Converting
 # UK->ET means a match day can straddle two UK dates (e.g. a UK 01:30 kickoff is
@@ -220,6 +236,13 @@ def load_long(source: str | None = "live", use_api: bool = True) -> pd.DataFrame
         frames.append(p[keep])
 
     long = pd.concat(frames, ignore_index=True).merge(res_keys, on="match_id")
+
+    # Tidy displayed team names so a hand-typed Sheet inconsistency (e.g.
+    # "Ivory coast " on one fixture) renders as the team's majority spelling.
+    # Join keys still go through canon(), so this is purely cosmetic.
+    spell = _display_spellings(pd.concat([long["home"], long["away"]]))
+    long["home"] = long["home"].map(lambda n: spell.get(canon(n), str(n).strip()))
+    long["away"] = long["away"].map(lambda n: spell.get(canon(n), str(n).strip()))
 
     for col in ("points", "exact_pt", "outcome_pt", "pred_home", "pred_away",
                 "actual_home", "actual_away"):
