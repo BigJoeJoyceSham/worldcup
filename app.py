@@ -431,7 +431,8 @@ def title_odds(table: pd.DataFrame) -> dict[str, str]:
     each further point behind costs progressively more. When two-plus share the
     lead, chasers must overhaul more than one rival, so their prices drift out a
     touch further (more co-leaders → longer).
-    Reddy: a standing joke — always 99/1.
+    Reddy: a standing joke — always 250/1.
+    Kian: fixed at 25/1.
     """
     players = list(table["Player"])
     pts = [int(x) for x in table["Pts"]]
@@ -441,7 +442,10 @@ def title_odds(table: pd.DataFrame) -> dict[str, str]:
     odds: dict[str, str] = {}
     for i, pl in enumerate(players):
         if pl == "Reddy":
-            odds[pl] = "99/1"
+            odds[pl] = "250/1"
+            continue
+        if pl == "Kian":
+            odds[pl] = "25/1"
             continue
         if i == 0:
             cushion = lead - second  # points clear of the field
@@ -707,9 +711,9 @@ with tab_mdc:
                     unsafe_allow_html=True)
                 st.markdown("  \n".join(recap["lines"]))
 
-        # Latest odds: each player's price to win it outright. Reddy alone
-        # carries a delta — the running gag that his eternal 100/1 finally
-        # "shortened" to 99/1 (green -1, inverse colour).
+        # Latest odds: each player's price to win it outright. Reddy and Kian
+        # carry a delta — the running gag that their price "shortened" by a
+        # point (green -1, inverse colour): Reddy 251→250/1, Kian 26→25/1.
         odds = title_odds(standings_table(df, PLAYERS)[0])
         st.markdown("**:material/casino: Latest odds** &nbsp;"
                     "<span style='color:#6B7280;font-weight:400;font-size:0.85rem'>"
@@ -721,6 +725,8 @@ with tab_mdc:
         ocols = st.columns(len(odds))
         for col, (pl, price) in zip(ocols, odds.items()):
             if pl == "Reddy":
+                col.metric(pl, price, delta="-1", delta_color="inverse")
+            elif pl == "Kian":
                 col.metric(pl, price, delta="-1", delta_color="inverse")
             else:
                 col.metric(pl, price)
