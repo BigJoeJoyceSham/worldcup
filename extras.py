@@ -133,9 +133,9 @@ def build_recap(df: pd.DataFrame, players: list[str],
 
     # 1) Title picture — always the first line.
     if gap == 0:
-        lines.append(f"🏆 **{leader}** & **{runner}** tied at the top on {int(pts_after[leader])}.")
+        lines.append(f"👑 Kings of d Town: **{leader}** & **{runner}** tied at the top on {int(pts_after[leader])}.")
     else:
-        lines.append(f"🏆 **{leader}** leads by {gap} over **{runner}**.")
+        lines.append(f"👑 King of d Town: **{leader}** leads by {gap} over **{runner}**.")
 
     # 2) Headline: biggest points haul of the day (handle shared tops).
     top_gain = int(gained.max())
@@ -184,12 +184,20 @@ def build_recap(df: pd.DataFrame, players: list[str],
     blanks = [p for p in players if gained[p] == 0]
     if blanks and n_concluded >= 1:
         blanks = sorted(blanks, key=lambda p: rank_after[p])
-        names = ", ".join(blanks)
-        again = (prev_date is not None
-                 and all(gained_prev.get(p, 1) == 0 for p in blanks))
-        # One or many: "X[, Y] Shite in the bucket".
-        lines.append(f"🪣 **{names} Shite in the bucket**"
-                     f"{' for the past 3 months' if again else ''}")
+        # Persistent blankers (also blanked last time) carry the "last three
+        # months" jibe; first-timers get a plain line. A mixed week therefore
+        # prints two lines rather than tarring a one-off blanker with the
+        # long-running streak — slight repetition, but each verdict is fair.
+        persistent = ({p for p in blanks if gained_prev.get(p, 1) == 0}
+                      if prev_date is not None else set())
+        groups = (([p for p in blanks if p not in persistent], ""),
+                  ([p for p in blanks if p in persistent],
+                   " for the last three months"))
+        for group, tail in groups:
+            if group:
+                names = ", ".join(group)
+                lines.append(f"🪣 **{names} - Shite in the bucket{tail} "
+                             f"{int(gained[group[0]])}**")
 
     return {
         "round": idx,
