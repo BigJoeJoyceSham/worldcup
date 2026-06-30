@@ -420,8 +420,18 @@ _LEADER_LADDER = [
 ]
 
 
-def title_odds(table: pd.DataFrame) -> dict[str, str]:
+def _odds_to_one(label: str) -> float:
+    """Fractional label → odds-to-1 number, e.g. '80/1' → 80, '15/8' → 1.875."""
+    num, den = label.split("/")
+    return int(num) / int(den)
+
+
+def title_odds(table: pd.DataFrame) -> tuple[dict[str, str], dict[str, str]]:
     """Win-the-whole-thing prices, table sorted best-first.
+
+    Returns ``(odds, deltas)``. ``odds`` maps every player to a fractional
+    price; ``deltas`` carries a signed move label for the two joke prices only
+    (rendered as a coloured chip under the metric).
 
     Leader: firms up the more daylight they have over 2nd place, driving into
     odds-on territory for a runaway lead — 2/1 (level), 15/8 (1–2 clear),
@@ -431,8 +441,8 @@ def title_odds(table: pd.DataFrame) -> dict[str, str]:
     each further point behind costs progressively more. When two-plus share the
     lead, chasers must overhaul more than one rival, so their prices drift out a
     touch further (more co-leaders → longer).
-    Reddy: a standing joke — always 250/1.
-    Kian: fixed at 25/1.
+    Reddy: a standing joke — always 250/1, blown out +151 from his old 99/1.
+    Kian: fixed at 25/1; delta is the honest move from his model price.
     """
     players = list(table["Player"])
     pts = [int(x) for x in table["Pts"]]
@@ -440,19 +450,20 @@ def title_odds(table: pd.DataFrame) -> dict[str, str]:
     second = pts[1] if len(pts) > 1 else lead
     n_top = pts.count(lead)  # how many share the summit
     odds: dict[str, str] = {}
+    deltas: dict[str, str] = {}
     for i, pl in enumerate(players):
         if pl == "Reddy":
+            # Joke price, drifted out from his canonical 99/1: +151 to 250/1.
             odds[pl] = "250/1"
+            deltas[pl] = "+151"
             continue
-        if pl == "Kian":
-            odds[pl] = "25/1"
-            continue
+        # Model price first — used as everyone's quote, and as Kian's baseline.
         if i == 0:
             cushion = lead - second  # points clear of the field
             # Shorter the further clear of the pack — first ladder row the
             # cushion clears (rows are sorted biggest-cushion first).
-            odds[pl] = next(label for floor, label in _LEADER_LADDER
-                            if cushion >= floor)
+            price_label = next(label for floor, label in _LEADER_LADDER
+                               if cushion >= floor)
         else:
             d = lead - pts[i]  # points behind the leader
             # Anchored at 2/1 (d=0) and 5/2 (d=1); the d·(d−1) term is zero at
@@ -462,8 +473,15 @@ def title_odds(table: pd.DataFrame) -> dict[str, str]:
             # little for each extra co-leader to climb over (≈15% per rival).
             if d > 0 and n_top >= 2:
                 price *= 1 + 0.15 * (n_top - 1)
-            odds[pl] = _snap_odds(price)
-    return odds
+            price_label = _snap_odds(price)
+        if pl == "Kian":
+            # Fixed at 25/1; show how far that is from where the model prices him.
+            move = round(25 - _odds_to_one(price_label))
+            odds[pl] = "25/1"
+            deltas[pl] = f"{move:+d}"
+            continue
+        odds[pl] = price_label
+    return odds, deltas
 
 
 # --------------------------------------------------------------------------- #
@@ -712,9 +730,11 @@ with tab_mdc:
                 st.markdown("  \n".join(recap["lines"]))
 
         # Latest odds: each player's price to win it outright. Reddy and Kian
-        # carry a delta — the running gag that their price "shortened" by a
-        # point (green -1, inverse colour): Reddy 251→250/1, Kian 26→25/1.
-        odds = title_odds(standings_table(df, PLAYERS)[0])
+        # carry a signed delta chip (inverse colour, so a shorten shows green
+        # and a drift-out red): Reddy +151 out to 250/1, Kian's honest move on
+        # to his fixed 25/1. The two joke prices are parked at the tail —
+        # Kian second-last, Reddy last — regardless of the standings.
+        odds, odds_delta = title_odds(standings_table(df, PLAYERS)[0])
         st.markdown("**:material/casino: Latest odds** &nbsp;"
                     "<span style='color:#6B7280;font-weight:400;font-size:0.85rem'>"
                     "source: Patrick Power (feed delayed 15 mins)</span>"
@@ -722,14 +742,15 @@ with tab_mdc:
                     "color:#9CA3AF;font-weight:400;font-size:0.7rem'>"
                     "Please Gamble Responsibly</span>",
                     unsafe_allow_html=True)
-        ocols = st.columns(len(odds))
-        for col, (pl, price) in zip(ocols, odds.items()):
-            if pl == "Reddy":
-                col.metric(pl, price, delta="-1", delta_color="inverse")
-            elif pl == "Kian":
-                col.metric(pl, price, delta="-1", delta_color="inverse")
+        order = [pl for pl in odds if pl not in ("Kian", "Reddy")]
+        order += [pl for pl in ("Kian", "Reddy") if pl in odds]
+        ocols = st.columns(len(order))
+        for col, pl in zip(ocols, order):
+            if pl in odds_delta:
+                col.metric(pl, odds[pl], delta=odds_delta[pl],
+                           delta_color="inverse")
             else:
-                col.metric(pl, price)
+                col.metric(pl, odds[pl])
 
         st.divider()
         st.markdown("#### :material/sports_soccer: Fixtures & predictions")
