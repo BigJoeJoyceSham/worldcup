@@ -38,9 +38,15 @@ _ALIASES = {
 
 
 def canon(name) -> str:
-    """Normalise a team name to its canonical spelling for joining."""
+    """Normalise a team name to a canonical, case-insensitive join key.
+
+    Known spelling differences go through _ALIASES; the result is then casefolded
+    so any leftover case- or whitespace-only inconsistency still joins (the Sheet
+    is inconsistent even with itself, e.g. "Ivory Coast" vs "Ivory coast "). Used
+    only to build join keys on both sides — never for display.
+    """
     s = str(name).strip()
-    return _ALIASES.get(s.lower(), s)
+    return _ALIASES.get(s.lower(), s).casefold()
 
 
 # Fixture clocks are stored/displayed in UK local time, but the tournament is in

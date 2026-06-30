@@ -484,6 +484,30 @@ def title_odds(table: pd.DataFrame) -> tuple[dict[str, str], dict[str, str]]:
     return odds, deltas
 
 
+def odds_movement(df: pd.DataFrame, cur_odds: dict[str, str]) -> dict[str, str]:
+    """Signed price move for each model-priced runner over the latest matchday.
+
+    Compares today's quote with the price implied by the standings *before* the
+    most recent played matchday — the bookmaker idiom "shortened 9/1 → 7/1, -2"
+    (in green) or drifted out (red). Reddy and Kian carry fixed joke deltas set
+    in title_odds and are left untouched; a runner whose price didn't budge (or
+    a season with only one matchday played) gets no chip.
+    """
+    played = sorted(df.loc[df["played"], "match_day"].unique())
+    if len(played) < 2:
+        return {}
+    prev = df[df["match_day"] < played[-1]]
+    prev_odds, _ = title_odds(standings_table(prev, PLAYERS)[0])
+    moves: dict[str, str] = {}
+    for pl, price in cur_odds.items():
+        if pl in ("Reddy", "Kian") or pl not in prev_odds:
+            continue
+        move = round(_odds_to_one(price) - _odds_to_one(prev_odds[pl]))
+        if move:
+            moves[pl] = f"{move:+d}"
+    return moves
+
+
 # --------------------------------------------------------------------------- #
 # Sidebar
 # --------------------------------------------------------------------------- #
@@ -729,12 +753,14 @@ with tab_mdc:
                     unsafe_allow_html=True)
                 st.markdown("  \n".join(recap["lines"]))
 
-        # Latest odds: each player's price to win it outright. Reddy and Kian
-        # carry a signed delta chip (inverse colour, so a shorten shows green
-        # and a drift-out red): Reddy +151 out to 250/1, Kian's honest move on
-        # to his fixed 25/1. The two joke prices are parked at the tail —
-        # Kian second-last, Reddy last — regardless of the standings.
+        # Latest odds: each player's price to win it outright, with a signed
+        # delta chip (inverse colour, so a shorten shows green and a drift-out
+        # red). Model-priced runners move with the standings over the latest
+        # matchday; Reddy is the fixed +151 gag and Kian his fixed model-gap.
+        # The two joke prices are parked at the tail — Kian second-last, Reddy
+        # last — regardless of the standings.
         odds, odds_delta = title_odds(standings_table(df, PLAYERS)[0])
+        odds_delta.update(odds_movement(df, odds))
         st.markdown("**:material/casino: Latest odds** &nbsp;"
                     "<span style='color:#6B7280;font-weight:400;font-size:0.85rem'>"
                     "source: Patrick Power (feed delayed 15 mins)</span>"

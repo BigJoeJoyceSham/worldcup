@@ -22,30 +22,30 @@ FINISHED = {"home_team_name_en": "Netherlands", "away_team_name_en": "Japan",
 
 
 def test_live_game_is_played_and_live_with_score():
-    # (home, away, played, live)
+    # (home, away, played, live). Keys are casefolded join keys (see canon).
     parsed = dl._parse_games([LIVE])
-    assert parsed[("Netherlands", "Sweden")] == (2, 0, True, True)
+    assert parsed[(dl.canon("Netherlands"), dl.canon("Sweden"))] == (2, 0, True, True)
 
 
 def test_future_game_is_not_played_nor_live():
     parsed = dl._parse_games([FUTURE])
-    assert parsed[("Japan", "Sweden")] == (0, 0, False, False)
+    assert parsed[(dl.canon("Japan"), dl.canon("Sweden"))] == (0, 0, False, False)
 
 
 def test_finished_game_is_played_not_live():
     parsed = dl._parse_games([FINISHED])
-    hs, aw, played, live = parsed[("Netherlands", "Japan")]
+    hs, aw, played, live = parsed[(dl.canon("Netherlands"), dl.canon("Japan"))]
     assert played is True and live is False
 
 
 def test_missing_time_elapsed_falls_back_to_finished_flag():
     g = {**LIVE, "finished": "TRUE"}
     del g["time_elapsed"]
-    played, live = dl._parse_games([g])[("Netherlands", "Sweden")][2:]
+    played, live = dl._parse_games([g])[(dl.canon("Netherlands"), dl.canon("Sweden"))][2:]
     assert played is True and live is False   # finished, not live
     g2 = {**FUTURE}
     del g2["time_elapsed"]
-    assert dl._parse_games([g2])[("Japan", "Sweden")][2:] == (False, False)
+    assert dl._parse_games([g2])[(dl.canon("Japan"), dl.canon("Sweden"))][2:] == (False, False)
 
 
 def test_placeholder_and_nonnumeric_rows_skipped():
@@ -57,6 +57,22 @@ def test_placeholder_and_nonnumeric_rows_skipped():
          "time_elapsed": "notstarted"},
     ]
     assert dl._parse_games(rows) == {}
+
+
+def test_canon_is_case_and_space_insensitive():
+    # The Sheet is inconsistent with itself: "Ivory Coast" on some rows,
+    # "Ivory coast " (lower c, trailing space) on others. Both must produce the
+    # same join key, or the finished score never reaches that fixture.
+    assert dl.canon("Ivory coast ") == dl.canon("Ivory Coast")
+
+
+def test_join_key_survives_sheet_casing_inconsistency():
+    # API spells it "Ivory Coast"; the Sheet row for that fixture says
+    # "Ivory coast ". The Sheet-side lookup key must hit the API-side key.
+    api = dl._parse_games([{**FINISHED, "home_team_name_en": "Ivory Coast",
+                            "away_team_name_en": "Norway"}])
+    sheet_key = (dl.canon("Ivory coast "), dl.canon("Norway "))
+    assert sheet_key in api
 
 
 def test_et_match_day_straddles_uk_dates():
