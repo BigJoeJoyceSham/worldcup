@@ -179,6 +179,30 @@ def _swap_final(final):
     return (fa, fh, pa, ph)
 
 
+def _merge_fixture(s_home, s_away, s_played, api_hit):
+    """Combine one fixture's Sheet result with its API hit -> (home, away,
+    played, live, final), applying the source precedence:
+
+      1. LIVE game        -> the feed drives it (live scores never freeze, even
+                             if the Sheet holds a value for this fixture);
+      2. finished & in Sheet -> the hand-kept Sheet wins the score (always right,
+                             already the 90-minute result), feed only badges;
+      3. finished, not in Sheet yet -> the feed fills it (just-finished game);
+      4. neither          -> whatever the Sheet had (typically unplayed).
+
+    ``api_hit`` is the feed tuple (home, away, played, live, final) already
+    oriented to this fixture's home/away, or None when the feed has no row."""
+    if api_hit is not None:
+        a_home, a_away, a_played, a_live, a_final = api_hit
+        if a_live:
+            return a_home, a_away, a_played, True, a_final
+    if bool(s_played):
+        return s_home, s_away, True, False, (api_hit[4] if api_hit else None)
+    if api_hit is not None:
+        return a_home, a_away, a_played, a_live, a_final
+    return s_home, s_away, bool(s_played), False, None
+
+
 def _final_label(final) -> str:
     """Badge text for an after-90 result: "3-2 AET" for an extra-time win,
     "3-4 pens" for a shootout. Empty string when decided inside 90 minutes."""
@@ -355,15 +379,18 @@ def load_long(source: str | None = "live", use_api: bool = True) -> pd.DataFrame
             api = None
             results_origin = f"Sheet fallback (API failed: {exc})"
         if api:
-            # The hand-kept Sheet is the source of truth for the SCORE: once a
-            # result is entered there we trust it (it's always right, and already
-            # the 90-minute result). The automated feed then does two jobs:
-            #   1. fills fixtures the Sheet hasn't got yet -- live games and
-            #      just-finished ones before someone types them in;
-            #   2. supplies the after-90 (ET/pens) badge as enrichment, since the
-            #      Sheet only stores the 90-minute score.
-            # A join miss (alias gap, knockout TBD, swapped orientation) must
-            # never wipe a real Sheet result to unplayed.
+            # Merge precedence, per fixture:
+            #   1. LIVE game  -> the feed ALWAYS drives it, so in-progress scores
+            #      update live (the dashboard's whole point) and can never be
+            #      frozen by a stale Sheet value.
+            #   2. finished & entered in the Sheet -> the hand-kept Sheet wins the
+            #      SCORE (it's always right, and already the 90-minute result).
+            #   3. finished but not in the Sheet yet -> the feed fills it (a
+            #      just-finished game, before someone types it in).
+            # The feed always supplies the after-90 (ET/pens) badge as enrichment,
+            # since the Sheet only stores the 90-minute score. A join miss (alias
+            # gap, knockout TBD, swapped orientation) must never wipe a real Sheet
+            # result to unplayed.
             keys = zip(long["home"].map(canon), long["away"].map(canon),
                        long["actual_home"], long["actual_away"], long["played"])
             ah, aw, pl, lv, fn = [], [], [], [], []
@@ -372,33 +399,15 @@ def load_long(source: str | None = "live", use_api: bool = True) -> pd.DataFrame
                 # away); the Sheet and feed don't always agree on which side is
                 # home, so try the swapped pairing and flip it back.
                 hit = api.get((k_home, k_away))
-                if hit is not None:
-                    a_home, a_away, a_played, a_live, a_final = hit
-                    has_api = True
-                else:
+                if hit is None:
                     swapped = api.get((k_away, k_home))
-                    if swapped is not None:
-                        a_home, a_away = swapped[1], swapped[0]
-                        a_played, a_live = swapped[2], swapped[3]
-                        a_final = _swap_final(swapped[4])
-                        has_api = True
-                    else:
-                        has_api = False
-
-                if bool(s_played):
-                    # Sheet has the result -> it wins the score; feed only badges.
-                    ah.append(s_home); aw.append(s_away)
-                    pl.append(True); lv.append(False)
-                    fn.append(a_final if has_api else None)
-                elif has_api:
-                    # Sheet blank -> the feed fills it (live / just-finished).
-                    ah.append(a_home); aw.append(a_away)
-                    pl.append(a_played); lv.append(a_live)
-                    fn.append(a_final)
-                else:
-                    ah.append(s_home); aw.append(s_away)
-                    pl.append(bool(s_played)); lv.append(False)
-                    fn.append(None)
+                    hit = None if swapped is None else (
+                        swapped[1], swapped[0], swapped[2], swapped[3],
+                        _swap_final(swapped[4]))
+                m_home, m_away, m_played, m_live, m_final = _merge_fixture(
+                    s_home, s_away, s_played, hit)
+                ah.append(m_home); aw.append(m_away)
+                pl.append(m_played); lv.append(m_live); fn.append(m_final)
             long["actual_home"], long["actual_away"] = ah, aw
             long["played"], long["live"] = pl, lv
             long["final"] = [_final_label(f) for f in fn]

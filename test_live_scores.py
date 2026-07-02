@@ -179,6 +179,32 @@ def test_unreconciled_scorers_fall_back_to_reported_score():
     assert dl._parse_games([g])[(dl.canon("Belgium"), dl.canon("Senegal"))][:2] == (3, 2)
 
 
+def test_merge_live_game_always_comes_from_feed():
+    # A live game must show the feed's live score even if the Sheet holds a
+    # (stale) value -- live updates are the whole point of the dashboard.
+    hit = (1, 0, True, True, None)  # feed: home leading, in progress
+    assert dl._merge_fixture(9, 9, True, hit) == (1, 0, True, True, None)
+
+
+def test_merge_finished_prefers_sheet_score_with_feed_badge():
+    # Finished and entered in the Sheet: the Sheet wins the score, the feed only
+    # contributes the after-90 badge (Belgium 2-2 on the Sheet, 3-2 AET on feed).
+    hit = (2, 2, True, False, (3, 2, None, None))
+    assert dl._merge_fixture(2, 2, True, hit) == (2, 2, True, False, (3, 2, None, None))
+
+
+def test_merge_just_finished_not_yet_in_sheet_uses_feed():
+    # Sheet blank (nobody's typed it in yet) -> the feed fills the result.
+    hit = (3, 0, True, False, None)
+    assert dl._merge_fixture(None, None, False, hit) == (3, 0, True, False, None)
+
+
+def test_merge_no_feed_row_keeps_sheet():
+    # Feed miss (alias gap / TBD knockout) must never wipe a Sheet result.
+    assert dl._merge_fixture(2, 1, True, None) == (2, 1, True, False, None)
+    assert dl._merge_fixture(None, None, False, None) == (None, None, False, False, None)
+
+
 def test_et_match_day_straddles_uk_dates():
     import pandas as pd
     # UK 01:30 on 20 Jun is the prior ET evening (19 Jun); UK 18:00 stays 20 Jun.
