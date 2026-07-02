@@ -290,10 +290,12 @@ def load_long(source: str | None = "live", use_api: bool = True) -> pd.DataFrame
     Pass a local .xlsx path for offline use, or "live"/None to pull the
     current Google Sheet for predictions + fixtures.
 
-    When ``use_api`` is set (default), actual scores come from the live results
-    feed (the source of truth going forward) and points are recomputed from
-    each prediction against the feed's result. If the feed is unreachable we
-    silently fall back to the scores recorded in the Sheet.
+    When ``use_api`` is set (default), the hand-kept Sheet stays the source of
+    truth for any result already entered there (it's always correct, and already
+    the 90-minute score); the live results feed fills fixtures the Sheet hasn't
+    got yet (live / just-finished games) and supplies the after-90 (ET/pens)
+    badge. Points are recomputed from each prediction against the resulting
+    score. If the feed is unreachable we use the Sheet scores alone.
     """
     raw = _read_workbook(source)
     # Parse the workbook ONCE. Calling pd.read_excel per sheet re-parses the
@@ -353,26 +355,46 @@ def load_long(source: str | None = "live", use_api: bool = True) -> pd.DataFrame
             api = None
             results_origin = f"Sheet fallback (API failed: {exc})"
         if api:
-            # Override actuals from the API where it has the fixture; otherwise
-            # KEEP whatever the Sheet recorded. A join miss (alias gap, knockout
-            # TBD, swapped orientation) must not wipe a real result to unplayed.
+            # The hand-kept Sheet is the source of truth for the SCORE: once a
+            # result is entered there we trust it (it's always right, and already
+            # the 90-minute result). The automated feed then does two jobs:
+            #   1. fills fixtures the Sheet hasn't got yet -- live games and
+            #      just-finished ones before someone types them in;
+            #   2. supplies the after-90 (ET/pens) badge as enrichment, since the
+            #      Sheet only stores the 90-minute score.
+            # A join miss (alias gap, knockout TBD, swapped orientation) must
+            # never wipe a real Sheet result to unplayed.
             keys = zip(long["home"].map(canon), long["away"].map(canon),
                        long["actual_home"], long["actual_away"], long["played"])
             ah, aw, pl, lv, fn = [], [], [], [], []
             for k_home, k_away, s_home, s_away, s_played in keys:
+                # Resolve the feed's row for this fixture, oriented to (home,
+                # away); the Sheet and feed don't always agree on which side is
+                # home, so try the swapped pairing and flip it back.
                 hit = api.get((k_home, k_away))
                 if hit is not None:
-                    ah.append(hit[0]); aw.append(hit[1])
-                    pl.append(hit[2]); lv.append(hit[3])
-                    fn.append(hit[4])
-                    continue
-                # The API and Sheet don't always agree on which side is home,
-                # so also try the swapped pairing and flip the scores back.
-                swapped = api.get((k_away, k_home))
-                if swapped is not None:
-                    ah.append(swapped[1]); aw.append(swapped[0])
-                    pl.append(swapped[2]); lv.append(swapped[3])
-                    fn.append(_swap_final(swapped[4]))
+                    a_home, a_away, a_played, a_live, a_final = hit
+                    has_api = True
+                else:
+                    swapped = api.get((k_away, k_home))
+                    if swapped is not None:
+                        a_home, a_away = swapped[1], swapped[0]
+                        a_played, a_live = swapped[2], swapped[3]
+                        a_final = _swap_final(swapped[4])
+                        has_api = True
+                    else:
+                        has_api = False
+
+                if bool(s_played):
+                    # Sheet has the result -> it wins the score; feed only badges.
+                    ah.append(s_home); aw.append(s_away)
+                    pl.append(True); lv.append(False)
+                    fn.append(a_final if has_api else None)
+                elif has_api:
+                    # Sheet blank -> the feed fills it (live / just-finished).
+                    ah.append(a_home); aw.append(a_away)
+                    pl.append(a_played); lv.append(a_live)
+                    fn.append(a_final)
                 else:
                     ah.append(s_home); aw.append(s_away)
                     pl.append(bool(s_played)); lv.append(False)
@@ -380,7 +402,7 @@ def load_long(source: str | None = "live", use_api: bool = True) -> pd.DataFrame
             long["actual_home"], long["actual_away"] = ah, aw
             long["played"], long["live"] = pl, lv
             long["final"] = [_final_label(f) for f in fn]
-            results_origin = "live API (worldcup26.ir), Sheet for unmatched"
+            results_origin = "Sheet where entered, else live API (worldcup26.ir)"
 
     # Recompute points from each prediction against the (possibly API) result,
     # so totals always reflect the current source of truth.
