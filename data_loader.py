@@ -12,6 +12,7 @@ without touching anything downstream of `load_long()`.
 from __future__ import annotations
 
 import io
+import re
 import time
 from zoneinfo import ZoneInfo
 import numpy as np
@@ -106,29 +107,120 @@ def _is_live(game) -> bool:
             and str(game.get("time_elapsed", "")).strip().lower() == "live")
 
 
-def _parse_games(games) -> dict[tuple[str, str], tuple[int, int, bool, bool]]:
+# Each goal in a scorer list ends in its minute, e.g. "86'", "90+1'" (regulation
+# stoppage), "125(P)'" (extra-time penalty). We capture the leading minute only.
+_GOAL_MINUTE = re.compile(r"(\d+)(?:\+\d+)?(?:\([^)]*\))?'")
+
+
+def _goal_minutes(scorers) -> list[int]:
+    """Leading minute of every goal in a feed scorer string, in listed order.
+
+    "{"Lukaku 86'","Tielemans 89'","Tielemans 125(P)'"}" -> [86, 89, 125].
+    Empty / "null" / None yield []. Stoppage-time ("90+1'") and annotated
+    ("125(P)'") goals keep their base minute; extra time reads as > 90."""
+    if not scorers or str(scorers).strip().lower() == "null":
+        return []
+    return [int(m) for m in _GOAL_MINUTE.findall(str(scorers))]
+
+
+def _ninety_min_score(game, home_score: int, away_score: int) -> tuple[int, int]:
+    """Collapse a feed score to the 90-minute (regulation) result the league
+    scores on, dropping any extra-time goals.
+
+    The feed's home_score/away_score include extra-time goals (e.g. Belgium 3-2
+    Senegal, where Tielemans' 125' penalty settled a game that was 2-2 at full
+    time). We rebuild the FT score by counting only goals struck at minute <= 90.
+
+    Guarded: we trust the reconstruction only when the parsed goal counts
+    reconcile with the reported score. If scorer data is missing or malformed
+    the counts won't match, and we return the reported score untouched — a game
+    decided inside 90 minutes is unaffected either way. Penalty-shootout wins
+    already report the drawn 90'/120' score (the feed keeps shootout goals in a
+    separate field), so they pass through unchanged."""
+    home_min = _goal_minutes(game.get("home_scorers"))
+    away_min = _goal_minutes(game.get("away_scorers"))
+    if len(home_min) != home_score or len(away_min) != away_score:
+        return home_score, away_score
+    return sum(m <= 90 for m in home_min), sum(m <= 90 for m in away_min)
+
+
+def _int_or_none(value):
+    """Parse a feed integer field that may arrive as "null"/None/"" -> int|None."""
+    if value is None or str(value).strip().lower() in {"null", "none", ""}:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _final_result(final_home, final_away, home_90, away_90, game):
+    """The after-90 outcome for a knockout drawn at full time, or None.
+
+    Returns (final_home, final_away, pen_home, pen_away) when the game was
+    settled beyond 90 minutes -- either an extra-time goal moved the score off
+    the full-time draw, or it went to penalties (pen_* from the feed's separate
+    shootout fields). Returns None for anything decided inside 90 minutes, so
+    the UI only badges a "final result" when there genuinely is one."""
+    pen_home = _int_or_none(game.get("home_penalty_score"))
+    pen_away = _int_or_none(game.get("away_penalty_score"))
+    went_to_pens = pen_home is not None and pen_away is not None
+    if (final_home, final_away) == (home_90, away_90) and not went_to_pens:
+        return None
+    return (final_home, final_away, pen_home, pen_away)
+
+
+def _swap_final(final):
+    """Flip home/away in a final-result tuple, for when the Sheet and feed
+    disagree on which side is home (the score join already swaps)."""
+    if not final:
+        return None
+    fh, fa, ph, pa = final
+    return (fa, fh, pa, ph)
+
+
+def _final_label(final) -> str:
+    """Badge text for an after-90 result: "3-2 AET" for an extra-time win,
+    "3-4 pens" for a shootout. Empty string when decided inside 90 minutes."""
+    if not final:
+        return ""
+    fh, fa, ph, pa = final
+    if ph is not None and pa is not None:
+        return f"{ph}-{pa} pens"
+    return f"{fh}-{fa} AET"
+
+
+def _parse_games(games) -> dict[tuple[str, str], tuple]:
     """Pure parse of the feed's `games` list -> {(home, away): (home_score,
-    away_score, played, live)}, keyed by canonical team names. `played` is True
-    for finished AND in-progress games so live scores surface; `live` flags the
-    in-progress ones so the UI can show "LIVE" rather than "FT". Placeholder
-    knockout rows (no team name) and non-numeric scores are skipped."""
-    out: dict[tuple[str, str], tuple[int, int, bool, bool]] = {}
+    away_score, played, live, final)}, keyed by canonical team names.
+
+    `home_score`/`away_score` are the 90-minute result the league scores on
+    (extra-time goals stripped). `played` is True for finished AND in-progress
+    games so live scores surface; `live` flags the in-progress ones so the UI
+    can show "LIVE" rather than "FT". `final` is the after-90 result tuple (see
+    `_final_result`) or None. Placeholder knockout rows (no team name) and
+    non-numeric scores are skipped."""
+    out: dict[tuple[str, str], tuple] = {}
     for g in games:
         h, a = g.get("home_team_name_en"), g.get("away_team_name_en")
         if not h or not a:
             continue
         try:
-            hs, aw = int(g["home_score"]), int(g["away_score"])
+            fh, fa = int(g["home_score"]), int(g["away_score"])
         except (TypeError, ValueError, KeyError):
             continue
-        out[(canon(h), canon(a))] = (hs, aw, _is_started(g), _is_live(g))
+        # League scores on the 90-minute result, so strip extra-time goals; keep
+        # the after-90 final (ET/pens) so the UI can badge it for clarity.
+        hs, aw = _ninety_min_score(g, fh, fa)
+        final = _final_result(fh, fa, hs, aw, g)
+        out[(canon(h), canon(a))] = (hs, aw, _is_started(g), _is_live(g), final)
     return out
 
 
 def fetch_api_results(url: str = API_URL, attempts: int = 5
-                      ) -> dict[tuple[str, str], tuple[int, int, bool, bool]]:
+                      ) -> dict[tuple[str, str], tuple]:
     """Pull live results from the feed -> {(home, away): (home_score, away_score,
-    played)}, keyed by canonical team names.
+    played, live, final)}, keyed by canonical team names.
 
     The feed is flaky: ~70% of single requests die mid-handshake (SSL EOF /
     connection reset). A single failure here makes `load_long` fall back to the
@@ -251,6 +343,7 @@ def load_long(source: str | None = "live", use_api: bool = True) -> pd.DataFrame
     # ET match day (24h NY window) for every fixture; `live` only the API sets.
     long["match_day"] = et_match_day(long["datetime"])
     long["live"] = False
+    long["final"] = ""  # after-90 (ET/pens) result badge; only the API sets it
 
     results_origin = "Google Sheet (manual)"
     if use_api:
@@ -265,12 +358,13 @@ def load_long(source: str | None = "live", use_api: bool = True) -> pd.DataFrame
             # TBD, swapped orientation) must not wipe a real result to unplayed.
             keys = zip(long["home"].map(canon), long["away"].map(canon),
                        long["actual_home"], long["actual_away"], long["played"])
-            ah, aw, pl, lv = [], [], [], []
+            ah, aw, pl, lv, fn = [], [], [], [], []
             for k_home, k_away, s_home, s_away, s_played in keys:
                 hit = api.get((k_home, k_away))
                 if hit is not None:
                     ah.append(hit[0]); aw.append(hit[1])
                     pl.append(hit[2]); lv.append(hit[3])
+                    fn.append(hit[4])
                     continue
                 # The API and Sheet don't always agree on which side is home,
                 # so also try the swapped pairing and flip the scores back.
@@ -278,11 +372,14 @@ def load_long(source: str | None = "live", use_api: bool = True) -> pd.DataFrame
                 if swapped is not None:
                     ah.append(swapped[1]); aw.append(swapped[0])
                     pl.append(swapped[2]); lv.append(swapped[3])
+                    fn.append(_swap_final(swapped[4]))
                 else:
                     ah.append(s_home); aw.append(s_away)
                     pl.append(bool(s_played)); lv.append(False)
+                    fn.append(None)
             long["actual_home"], long["actual_away"] = ah, aw
             long["played"], long["live"] = pl, lv
+            long["final"] = [_final_label(f) for f in fn]
             results_origin = "live API (worldcup26.ir), Sheet for unmatched"
 
     # Recompute points from each prediction against the (possibly API) result,

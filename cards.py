@@ -56,6 +56,9 @@ CSS = """
   font-weight:800;vertical-align:middle;margin-left:8px;}
 .wc-status.ft{background:#1E3A5F;color:#fff;font-size:1.15rem;padding:3px 13px;}
 .wc-status.ft .ftlab{opacity:.7;font-size:.7rem;font-weight:700;margin-right:3px;vertical-align:middle;}
+/* after-90 result (extra time / penalties), shown beside the FT 90' score */
+.wc-status.aet{background:#EEF2F8;color:#1E3A5F;border:1px solid #C7D2E3;
+  font-size:.82rem;padding:2px 9px;margin-left:5px;}
 .wc-status.up{background:#FEF3C7;color:#7C2D12;border:1px solid #F59E0B;}
 .wc-status.live{background:#DC2626;color:#fff;font-size:1.15rem;padding:3px 13px;
   box-shadow:0 0 0 0 rgba(220,38,38,.55);animation:wclivepulse 1.4s ease-out infinite;}
@@ -150,6 +153,15 @@ def match_card_html(rows: pd.DataFrame) -> str:
     else:
         status = f"<span class='wc-status up'>⏰ {dt:%-d %b · %H:%M}</span>"
 
+    # A game drawn at 90 but settled in extra time / penalties: the FT badge shows
+    # the 90' score the league scores on, so add the real final result alongside.
+    final_txt = str(meta["final"]) if "final" in meta.index else ""
+    if final_txt in ("", "nan", "None"):
+        final_badge = ""
+    else:
+        final_badge = (f"<span class='wc-status aet' title='Decided after 90 minutes'>"
+                       f"{_html.escape(final_txt)}</span>")
+
     right = (f"<div class='wc-pick'>Fancied: <b>{_html.escape(cons_txt)}</b></div>"
              f"{bar}{legend}")
 
@@ -197,7 +209,7 @@ def match_card_html(rows: pd.DataFrame) -> str:
   <div class="top">
     <div>
       <div class="wc-teams">{flag(home)} {_html.escape(home)}
-        <span class="wc-vs">VS</span>{_html.escape(away)} {flag(away)}{status}</div>
+        <span class="wc-vs">VS</span>{_html.escape(away)} {flag(away)}{status}{final_badge}</div>
       <div class="wc-sub">{sub}</div>
     </div>
     <div class="wc-right">
