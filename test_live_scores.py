@@ -66,6 +66,14 @@ def test_canon_is_case_and_space_insensitive():
     assert dl.canon("Ivory coast ") == dl.canon("Ivory Coast")
 
 
+def test_sheet_nicknames_join_to_feed_full_names():
+    # The Sheet abbreviates some teams; those must map to the feed's full name
+    # or a live score never reaches the fixture (e.g. Swiss vs Algeria R32).
+    assert dl.canon("Swiss") == dl.canon("Switzerland")
+    assert dl.canon("Aussies") == dl.canon("Australia")
+    assert dl.canon("Bosnia") == dl.canon("Bosnia and Herzegovina")
+
+
 def test_join_key_survives_sheet_casing_inconsistency():
     # API spells it "Ivory Coast"; the Sheet row for that fixture says
     # "Ivory coast ". The Sheet-side lookup key must hit the API-side key.

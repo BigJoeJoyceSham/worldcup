@@ -35,6 +35,12 @@ _ALIASES = {
     "democratic republic of the congo": "DR Congo",
     "turkiye": "Türkiye", "türkiye": "Türkiye", "turkey": "Türkiye",
     "usa": "USA", "united states": "USA",
+    # Sheet nicknames -> the feed's full name, so live scores join (and flags
+    # resolve). Without these the Sheet's "Swiss"/"Aussies"/"Bosnia" never match
+    # the feed's "Switzerland"/"Australia"/"Bosnia and Herzegovina".
+    "swiss": "Switzerland",
+    "aussies": "Australia",
+    "bosnia": "Bosnia and Herzegovina",
 }
 
 
