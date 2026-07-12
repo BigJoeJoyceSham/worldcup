@@ -207,7 +207,7 @@ def scoreline_habits(df: pd.DataFrame, player: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["Score", "Picked", "Landed"])
     habit = (rows.groupby("pred_score")
              .agg(Picked=("pred_score", "size"), Landed=("exact_hit", "sum"))
-             .sort_values("Picked", ascending=False).head(3).reset_index()
+             .sort_values("Picked", ascending=False).head(10).reset_index()
              .rename(columns={"pred_score": "Score"}))
     habit["Landed"] = habit["Landed"].astype(int)
     return habit
@@ -220,7 +220,7 @@ def scoreline_habits(df: pd.DataFrame, player: str) -> pd.DataFrame:
 _BEST_TRAIT = {
     "ACC": "Sees it before it happens",
     "RES": "Knows where we're going just not how we're getting there",
-    "BLD": "Either a Maverick or a Wet Brain hard to know",
+    "BLD": "Kenny Cunningham: Either a Maverick or a Wet Brain... hard to know",
     "CON": "metronomic, steady matchday hauls",
     "FRM": "flying over the last 10 matches",
 }
@@ -327,7 +327,7 @@ def scouting_report(df: pd.DataFrame, stats: pd.DataFrame, player: str) -> list[
         lines.append(f"🏦 Banker: {flag(banker[0])} **{banker[0]}** — "
                      f"{banker[1]:.1f} pts/game across {banker[2]}.")
     if bogey and bogey[1] < 0.5:
-        lines.append(f"🥔 Blight: {flag(bogey[0])} **{bogey[0]}** — "
+        lines.append(f"🥔 Blighter: {flag(bogey[0])} **{bogey[0]}** — "
                      f"{bogey[1]:.1f} pts/game from {bogey[2]}. Look away.")
 
     # Blank watch.
@@ -375,8 +375,9 @@ CSS = """
 .pctl .lab{display:flex;justify-content:space-between;font-size:.86rem;
   font-weight:600;color:#374151;margin-bottom:3px;}
 .pctl .lab .val{color:#6B7280;font-weight:700;}
-.pctl .track{height:10px;border-radius:6px;background:#F3F4F6;overflow:hidden;}
+.pctl .track{height:10px;border-radius:6px;background:#F3F4F6;position:relative;}
 .pctl .fill{height:100%;border-radius:6px;}
+.pctl .tick{position:absolute;top:-3px;width:4px;height:16px;border-radius:2px;}
 </style>
 """
 
@@ -423,38 +424,75 @@ def _ordinal(n: int) -> str:
     return f"{n}{suffix}"
 
 
-def rank_bars_html(stats: pd.DataFrame, player: str) -> str:
-    """League-rank bars: 1st fills the track, last barely registers."""
+_BAR_ITEMS = [
+    ("Points per game", "rk_ppg", "ppg", lambda v: f"{v:.2f}"),
+    ("Exact-score rate", "rk_acc", "acc_rate", lambda v: f"{v:.0%}"),
+    ("Correct-result rate", "rk_res", "res_rate", lambda v: f"{v:.0%}"),
+    ("Form (last 10 pts)", "rk_frm", "last10", lambda v: f"{int(v)}"),
+    ("Boldness", "rk_bold", "bold_rate", lambda v: f"{v:.0%}"),
+    ("Submission rate", "rk_rel", "rel_rate", lambda v: f"{v:.0%}"),
+]
+
+
+def rank_bars_html(stats: pd.DataFrame, player: str,
+                   rival: str | None = None,
+                   rival_colour: str = "#9CA3AF") -> str:
+    """League-rank bars: 1st fills the track, last barely registers. With a
+    rival, a coloured tick marks their rank on each track and their value
+    joins the label."""
     s = stats.loc[player]
+    r = stats.loc[rival] if rival else None
     n = len(stats)
-    items = [("Points per game", "rk_ppg", f"{s['ppg']:.2f}"),
-             ("Exact-score rate", "rk_acc", f"{s['acc_rate']:.0%}"),
-             ("Correct-result rate", "rk_res", f"{s['res_rate']:.0%}"),
-             ("Form (last 10 pts)", "rk_frm", f"{int(s['last10'])}"),
-             ("Boldness", "rk_bold", f"{s['bold_rate']:.0%}"),
-             ("Submission rate", "rk_rel", f"{s['rel_rate']:.0%}")]
     bars = []
-    for label, col, val in items:
-        rk = int(s[col])
+    for label, rk_col, raw_col, fmt in _BAR_ITEMS:
+        rk = int(s[rk_col])
         frac = (n - rk + 1) / n if n else 0
         colour = ("#16A34A" if frac >= 0.7
                   else "#F59E0B" if frac >= 0.4 else "#DC2626")
+        val = fmt(s[raw_col])
+        extra = tick = ""
+        if r is not None:
+            rrk = int(r[rk_col])
+            rfrac = (n - rrk + 1) / n if n else 0
+            tick = (f"<div class='tick' style='left:calc({rfrac * 100:.0f}% "
+                    f"- 2px);background:{rival_colour}'></div>")
+            extra = (f" &nbsp;<span style='color:{rival_colour}'>"
+                     f"{rival} {fmt(r[raw_col])} · {_ordinal(rrk)}</span>")
         bars.append(f"<div class='pctl'><div class='lab'><span>{label}</span>"
-                    f"<span class='val'>{val} · {_ordinal(rk)} of {n}</span></div>"
+                    f"<span class='val'>{val} · {_ordinal(rk)} of {n}{extra}"
+                    f"</span></div>"
                     f"<div class='track'><div class='fill' "
                     f"style='width:{frac * 100:.0f}%;background:{colour}'>"
-                    f"</div></div></div>")
+                    f"</div>{tick}</div></div>")
     return "".join(bars)
 
 
 # --------------------------------------------------------------------------- #
 # Radar
 # --------------------------------------------------------------------------- #
-def radar_option(stats: pd.DataFrame, player: str, colour: str) -> dict:
-    avg = stats[ATTRS].mean()
+def radar_option(stats: pd.DataFrame, player: str, colour: str,
+                 rival: str | None = None,
+                 rival_colour: str = "#9CA3AF") -> dict:
+    """Radar of the six attributes. Baseline overlay is the league average;
+    with a rival selected, the rival's polygon replaces it."""
+    if rival:
+        other_name = rival
+        other_vals = [int(stats.loc[rival, a]) for a in ATTRS]
+        other_style = {"value": other_vals, "name": rival,
+                       "areaStyle": {"opacity": 0.12},
+                       "lineStyle": {"width": 2, "color": rival_colour}}
+        colours = [colour, rival_colour]
+    else:
+        avg = stats[ATTRS].mean()
+        other_name = "League avg"
+        other_style = {"value": [round(float(avg[a]), 1) for a in ATTRS],
+                       "name": other_name,
+                       "lineStyle": {"width": 1.5, "type": "dashed"},
+                       "symbol": "none"}
+        colours = [colour, "#9CA3AF"]
     return {
-        "color": [colour, "#9CA3AF"],
-        "legend": {"data": [player, "League avg"], "bottom": 0},
+        "color": colours,
+        "legend": {"data": [player, other_name], "bottom": 0},
         "radar": {
             "indicator": [{"name": a, "max": 99} for a in ATTRS],
             "radius": "66%",
@@ -466,21 +504,27 @@ def radar_option(stats: pd.DataFrame, player: str, colour: str) -> dict:
         "series": [{"type": "radar", "data": [
             {"value": [int(stats.loc[player, a]) for a in ATTRS], "name": player,
              "areaStyle": {"opacity": 0.25}, "lineStyle": {"width": 3}},
-            {"value": [round(float(avg[a]), 1) for a in ATTRS], "name": "League avg",
-             "lineStyle": {"width": 1.5, "type": "dashed"}, "symbol": "none"},
+            other_style,
         ]}],
     }
 
 
-def radar_plotly(stats: pd.DataFrame, player: str, colour: str) -> go.Figure:
-    avg = stats[ATTRS].mean()
+def radar_plotly(stats: pd.DataFrame, player: str, colour: str,
+                 rival: str | None = None,
+                 rival_colour: str = "#9CA3AF") -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(r=[stats.loc[player, a] for a in ATTRS],
                                   theta=ATTRS, fill="toself", name=player,
                                   line=dict(color=colour, width=3)))
-    fig.add_trace(go.Scatterpolar(r=[avg[a] for a in ATTRS], theta=ATTRS,
-                                  name="League avg",
-                                  line=dict(color="#9CA3AF", dash="dash")))
+    if rival:
+        fig.add_trace(go.Scatterpolar(r=[stats.loc[rival, a] for a in ATTRS],
+                                      theta=ATTRS, name=rival,
+                                      line=dict(color=rival_colour, width=2)))
+    else:
+        avg = stats[ATTRS].mean()
+        fig.add_trace(go.Scatterpolar(r=[avg[a] for a in ATTRS], theta=ATTRS,
+                                      name="League avg",
+                                      line=dict(color="#9CA3AF", dash="dash")))
     fig.update_layout(height=340, polar=dict(radialaxis=dict(range=[0, 99])),
                       legend=dict(orientation="h", y=-0.15))
     return fig
@@ -608,24 +652,44 @@ def render(df: pd.DataFrame, players: list[str], cmap: dict[str, str]) -> None:
         st.markdown(f"#### 🕵️ Scouting report — {player}")
         st.markdown("  \n".join(scouting_report(df, stats, player)))
 
-    # ---- Attributes: radar vs league + percentile bars --------------------- #
+    # ---- Attributes: radar + rank bars, with optional rival overlay -------- #
     st.divider()
+    cc1, cc2 = st.columns([1, 2])
+    with cc1:
+        cmp_on = st.toggle("Compare with another player", key="cmp_on")
+    rival = None
+    if cmp_on:
+        rivals = [p for p in order if p != player]
+        # A stale stored rival (e.g. you just switched to viewing them) would
+        # make the selectbox error — drop it and fall back to the top rival.
+        if st.session_state.get("cmp_rival") not in rivals:
+            st.session_state.pop("cmp_rival", None)
+        with cc2:
+            rival = st.selectbox("Rival", rivals, key="cmp_rival",
+                                 label_visibility="collapsed")
+    rival_colour = cmap.get(rival, "#9CA3AF") if rival else "#9CA3AF"
+
     rcol, pcol = st.columns([1.1, 1], gap="large")
     with rcol:
         st.markdown("**:material/radar: Attribute profile**")
         if _HAS_ECHARTS:
-            st_echarts(radar_option(stats, player, cmap[player]),
-                       height="360px", key=f"radar-{player}")
+            st_echarts(radar_option(stats, player, cmap[player],
+                                    rival, rival_colour),
+                       height="360px", key=f"radar-{player}-{rival or 'avg'}")
         else:
-            st.plotly_chart(radar_plotly(stats, player, cmap[player]),
+            st.plotly_chart(radar_plotly(stats, player, cmap[player],
+                                         rival, rival_colour),
                             use_container_width=True)
         st.caption(" · ".join(f"**{a}**{ATTR_HELP[a].split('—')[1]}"
                               for a in ATTRS))
     with pcol:
         st.markdown("**:material/format_list_numbered: League ranks**")
-        st.markdown(rank_bars_html(stats, player), unsafe_allow_html=True)
-        st.caption("Rank vs the league per stat — longer bar, higher rank. "
-                   "Skill rates exclude blank picks.")
+        st.markdown(rank_bars_html(stats, player, rival, rival_colour),
+                    unsafe_allow_html=True)
+        st.caption(("Rank vs the league per stat — longer bar, higher rank. "
+                    f"Tick = {rival}. " if rival else
+                    "Rank vs the league per stat — longer bar, higher rank. ")
+                   + "Skill rates exclude blank picks.")
 
     # ---- Tendencies --------------------------------------------------------- #
     st.divider()
