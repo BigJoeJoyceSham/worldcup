@@ -150,6 +150,12 @@ def match_card_html(rows: pd.DataFrame) -> str:
     elif played:
         status = (f"<span class='wc-status ft'><span class='ftlab'>FT</span>"
                   f"{_html.escape(str(meta['actual_score']))}</span>")
+    elif pd.Timestamp.now() >= dt:
+        # Kick-off time has passed but the results feed still says
+        # "notstarted" — it lags the real world by however long its
+        # maintainer takes. Say so rather than showing a stale clock.
+        status = ("<span class='wc-status up'>⏳ Kicked off — "
+                  "waiting on the score feed</span>")
     else:
         status = f"<span class='wc-status up'>⏰ {dt:%-d %b · %H:%M}</span>"
 

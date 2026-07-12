@@ -1,8 +1,9 @@
 """World Cup 2026 predictions dashboard.
 
-Two tabs over the friends-league prediction pool:
+Three tabs over the friends-league prediction pool:
   Table           - standings, the animated points race + rank bump, heatmap
   Matchday Center - per-matchday recap, title odds, and fixture cards
+  Player          - per-member profile: FUT card, form, radar, tendencies, log
 
 Data comes from the shared Google Sheet via data_loader.load_long(); the live
 score feed can replace the Results half of that loader with no change here.
@@ -20,6 +21,7 @@ import streamlit as st
 import data_loader as dl
 import extras
 import cards as cardui
+import player_tab
 
 try:
     from streamlit_echarts import st_echarts
@@ -368,6 +370,11 @@ LL_CSS = """
 .ll-name{font-size:1.6rem;font-weight:800;color:#1C1919;line-height:1.1;}
 .ll-pts{margin-left:auto;font-size:2.1rem;font-weight:800;color:#1E3A5F;}
 .ll-pts span{font-size:.9rem;font-weight:600;color:#6B7280;margin-left:4px;}
+/* quiet race-verdict chips tucked under the hero cards */
+.race-strip{display:flex;gap:10px;flex-wrap:wrap;margin:-8px 0 20px;}
+.race-chip{background:#F6F8FB;border:1px solid #E6EAF0;border-radius:999px;
+  padding:5px 14px;font-size:.85rem;color:#4B5563;}
+.race-chip b{color:#1E3A5F;font-weight:700;}
 </style>
 """
 
@@ -577,13 +584,45 @@ st.sidebar.caption(f"{n_played} matches played · {df['match_id'].nunique()} sch
 
 st.title("⚽ World Cup 2026 Predictions there Boyz")
 
-tab_table, tab_mdc = st.tabs(
-    [":material/leaderboard: Table", ":material/stadium: Matchday Center"])
+# Top-level nav. st.tabs looks the part but forgets itself: the active tab
+# snaps back to Table on any full page reload — and the live window reloads
+# the page every 2 minutes. A keyed segmented control mirrored into the URL
+# survives both reruns and reloads, so viewers stay where they clicked.
+# The CSS re-dresses the segmented control as classic underline tabs (the
+# stock pill look reads as buttons, not navigation).
+VIEWS = {"Table": ":material/leaderboard: Table",
+         "Matchday Center": ":material/stadium: Matchday Center",
+         "Player": ":material/person: Player"}
+st.markdown(
+    "<style>"
+    ".st-key-topnav [data-testid='stButtonGroup']{gap:0;width:100%;"
+    "  border-bottom:2px solid #E8ECF2;}"
+    ".st-key-topnav button[kind^='segmented_control']{"
+    "  background:transparent !important;border:none !important;"
+    "  border-radius:0 !important;box-shadow:none !important;"
+    "  padding:10px 18px 12px !important;margin:0 !important;color:#6B7280;}"
+    ".st-key-topnav button[kind^='segmented_control'] p{"
+    "  font-size:1.02rem !important;font-weight:600;}"
+    ".st-key-topnav button[kind^='segmented_control']:hover{"
+    "  color:#1E3A5F;background:#F4F7FB !important;}"
+    ".st-key-topnav button[kind='segmented_controlActive']{"
+    "  color:#1E3A5F !important;box-shadow:inset 0 -3px 0 #1E3A5F !important;}"
+    ".st-key-topnav button[kind='segmented_controlActive'] p{font-weight:800;}"
+    "</style>",
+    unsafe_allow_html=True)
+if "view" not in st.session_state:
+    _qp = st.query_params.get("view", "Table")
+    st.session_state["view"] = _qp if _qp in VIEWS else "Table"
+with st.container(key="topnav"):
+    view = st.segmented_control("View", list(VIEWS), format_func=VIEWS.get,
+                                key="view",
+                                label_visibility="collapsed") or "Table"
+st.query_params["view"] = view
 
 # --------------------------------------------------------------------------- #
 # Live Table
 # --------------------------------------------------------------------------- #
-with tab_table:
+if view == "Table":
     table, md_cols, md_help = standings_table(df, PLAYERS)
     LEADER = table.iloc[0]["Player"]
     current = revealed_matchdays(df)
@@ -597,10 +636,55 @@ with tab_table:
                 f"{n_played} games played · {pct}% complete</span>",
                 unsafe_allow_html=True)
 
-    # ---- Leader / Loser hero cards -------------------------------------- #
+    # ---- How close to the end? Race verdicts ----------------------------- #
+    # Games left, points still on the table, and whether the two races that
+    # matter — the title (1st vs 2nd) and the poop card (last vs second
+    # last) — are still mathematically alive. A chaser's best case is a
+    # 3-a-game sweep while the other blanks, so a gap beyond 3x games left
+    # is over. Rendered as a quiet chip strip under the hero cards.
+    games_left = total - n_played
+    pts_left = games_left * 3
+    runner = table.iloc[1]
+    last_row, sl_row = table.iloc[-1], table.iloc[-2]
+    lead_gap = int(table.iloc[0]["Pts"]) - int(runner["Pts"])
+    spoon_gap = int(sl_row["Pts"]) - int(last_row["Pts"])
+
+    if games_left == 0:
+        title_chip = f"🏆 Title: <b>{LEADER}</b> takes it"
+        poop_chip = f"💩 Poop race: <b>{last_row['Player']}</b> holds the card"
+    else:
+        if lead_gap > pts_left:
+            title_chip = (f"🏆 Title: <b>sewn up</b> — "
+                          f"{runner['Player']} can't catch {LEADER}")
+        elif lead_gap == 0:
+            title_chip = (f"🏆 Title: <b>all square</b> — "
+                          f"{LEADER} & {runner['Player']} level")
+        else:
+            title_chip = (f"🏆 Title: <b>{LEADER} +{lead_gap}</b> — "
+                          f"{runner['Player']} needs a +{lead_gap + 1} swing")
+        if spoon_gap > pts_left:
+            poop_chip = (f"💩 Poop race: <b>sealed</b> — "
+                         f"{last_row['Player']} can't escape")
+        elif spoon_gap == 0:
+            poop_chip = (f"💩 Poop race: <b>level</b> — "
+                         f"{last_row['Player']} & {sl_row['Player']} neck and neck")
+        else:
+            poop_chip = (f"💩 Poop race: <b>{last_row['Player']} −{spoon_gap}</b>"
+                         f" — needs +{spoon_gap + 1} on {sl_row['Player']} "
+                         f"to escape")
+    race_strip = (
+        "<div class='race-strip'>"
+        f"<span class='race-chip'>⏳ <b>{games_left} games left</b> · "
+        f"{pts_left} pts to play for</span>"
+        f"<span class='race-chip'>{title_chip}</span>"
+        f"<span class='race-chip'>{poop_chip}</span>"
+        "</div>")
+
+    # ---- Leader / Loser hero cards (race strip tucked underneath) -------- #
     st.markdown(LL_CSS, unsafe_allow_html=True)
     st.markdown(leader_loser_html(table.iloc[0], table.iloc[1], table.iloc[-1]),
                 unsafe_allow_html=True)
+    st.markdown(race_strip, unsafe_allow_html=True)
 
     st.subheader(":material/emoji_events: Table")
     col_cfg = {"Pts": st.column_config.ProgressColumn(
@@ -644,9 +728,9 @@ with tab_table:
         st_echarts(echarts_combined_option(df, LEADER), height="700px", key="race")
     else:
         st.plotly_chart(_plotly_lines(df, "cum", reverse=False, title="Points"),
-                        width="stretch")
+                        use_container_width=True)
         st.plotly_chart(_plotly_lines(df, "rank", reverse=True, title="Position"),
-                        width="stretch")
+                        use_container_width=True)
 
     # ---- Heatmap: points by player (merged in under the race chart) ------ #
     st.divider()
@@ -681,12 +765,12 @@ with tab_table:
         hovertemplate="%{y}<br>%{x}<br>%{z} pts<extra></extra>"))
     heat.update_layout(height=380, xaxis=dict(tickangle=-60, showgrid=False),
                        yaxis=dict(showgrid=False))
-    st.plotly_chart(heat, width="stretch")
+    st.plotly_chart(heat, use_container_width=True)
 
 # --------------------------------------------------------------------------- #
 # Matchday Center
 # --------------------------------------------------------------------------- #
-with tab_mdc:
+elif view == "Matchday Center":
     st.subheader(":material/stadium: Matchday Center")
     # Only matchdays revealed so far (from 12:00 UK on their own date) — no
     # future matchdays in the picker. Default to the latest revealed one.
@@ -785,3 +869,9 @@ with tab_mdc:
         for mid in mids:
             st.markdown(cardui.match_card_html(df[df.match_id == int(mid)]),
                         unsafe_allow_html=True)
+
+# --------------------------------------------------------------------------- #
+# Player profiles
+# --------------------------------------------------------------------------- #
+elif view == "Player":
+    player_tab.render(df, PLAYERS, CMAP)
