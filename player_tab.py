@@ -215,13 +215,14 @@ def scoreline_habits(df: pd.DataFrame, player: str) -> pd.DataFrame:
 
 # Plain-English reads of each attribute for the scouting report, so the
 # acronyms on the radar/card get spelled out where the banter lives.
+# "Has the whole of England and Ireland bet" is reserved for the league
+# leader's points-per-game line; REL never headlines (submitting is basic).
 _BEST_TRAIT = {
-    "ACC": "Has the whole of England and Ireland bet",
+    "ACC": "Sees it before it happens",
     "RES": "Knows where we're going just not how we're getting there",
     "BLD": "Either a Maverick or a Wet Brain hard to know",
     "CON": "metronomic, steady matchday hauls",
     "FRM": "flying over the last 10 matches",
-    "REL": "Fuck all to be at",
 }
 _WORST_TRAIT = {
     "ACC": "A small fat duck 🦆",
@@ -254,11 +255,19 @@ def scouting_report(df: pd.DataFrame, stats: pd.DataFrame, player: str) -> list[
             lines.append(f"😕 All over the place — most picked "
                          f"**{h['Score']}** {int(h['Picked'])} times.")
 
-    # Standout and weak attributes, echoing the radar in words.
-    best = max(ATTRS, key=lambda a: int(s[a]))
+    # Standout and weak attributes, echoing the radar in words. The league
+    # leader's best trait is always points per game (top of the table = top
+    # PPG, since everyone has played the same games); for the rest, REL is
+    # excluded — merely submitting predictions is too basic to headline.
+    if int(s["rank"]) == 1:
+        best = None
+        lines.append(f"💪 Best trait **Points per game {s['ppg']:.2f}** — "
+                     f"Has the whole of England and Ireland bet.")
+    else:
+        best = max((a for a in ATTRS if a != "REL"), key=lambda a: int(s[a]))
+        lines.append(f"💪 Best trait **{best} {int(s[best])}** "
+                     f"({ATTR_HELP[best].split(' — ')[1]}) — {_BEST_TRAIT[best]}.")
     worst = min(ATTRS, key=lambda a: int(s[a]))
-    lines.append(f"💪 Best trait **{best} {int(s[best])}** "
-                 f"({ATTR_HELP[best].split(' — ')[1]}) — {_BEST_TRAIT[best]}.")
     if worst != best:
         lines.append(f"🚧 Weak spot **{worst} {int(s[worst])}** "
                      f"({ATTR_HELP[worst].split(' — ')[1]}) — {_WORST_TRAIT[worst]}.")
