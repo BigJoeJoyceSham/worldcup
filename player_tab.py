@@ -276,11 +276,20 @@ def scout_summary(stats: pd.DataFrame, player: str) -> str:
                     f"{s['ppg']:.2f} a game.")
     best = max((a for a in ATTRS if a != "REL"), key=lambda a: int(s[a]))
     worst = min(ATTRS, key=lambda a: int(s[a]))
-    if int(s[best]) == int(s[worst]):
-        profile = "No standout, no weak spot — the flattest profile going."
-    else:
-        profile = (f"The game is built on {_SUM_STRENGTH[best]}, while "
+    # Only a distinguishing profile earns the middle sentence: league-best at
+    # the standout or league-worst at the weak spot. Mid-pack profiles say
+    # nothing — "builds the game on calling results" either way is noise.
+    top = best != worst and int(s[best]) == int(stats[best].max())
+    bottom = best != worst and int(s[worst]) == int(stats[worst].min())
+    if top and bottom:
+        profile = (f" The game is built on {_SUM_STRENGTH[best]}, while "
                    f"{_SUM_WEAK[worst]}.")
+    elif top:
+        profile = f" The game is built on {_SUM_STRENGTH[best]}."
+    elif bottom:
+        profile = f" The soft spot — {_SUM_WEAK[worst]}."
+    else:
+        profile = ""
     rk10 = int(stats["last10"].rank(ascending=False, method="min")[player])
     rk5 = int(stats["last5"].rank(ascending=False, method="min")[player])
     # Submitting everything is the base case — only blanks earn a mention.
@@ -289,7 +298,7 @@ def scout_summary(stats: pd.DataFrame, player: str) -> str:
             f"({_ordinal(rk5)})"
             + ("." if int(s["blanks"]) == 0 else
                f", with {int(s['blanks'])} blanks along the way."))
-    return f"{standing} {profile} {form}"
+    return f"{standing}{profile} {form}"
 
 
 def scouting_report(df: pd.DataFrame, stats: pd.DataFrame, player: str) -> list[str]:
