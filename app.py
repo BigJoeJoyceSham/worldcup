@@ -449,7 +449,8 @@ def title_odds(table: pd.DataFrame) -> tuple[dict[str, str], dict[str, str]]:
     lead, chasers must overhaul more than one rival, so their prices drift out a
     touch further (more co-leaders → longer).
     Reddy: a standing joke — always 250/1, blown out +151 from his old 99/1.
-    Kian: fixed at 25/1; delta is the honest move from his model price.
+    Owen: fixed at 1/3 to win, whatever the model says.
+    Kian: fixed at 33/1; delta is the honest move from his model price.
     """
     players = list(table["Player"])
     pts = [int(x) for x in table["Pts"]]
@@ -481,10 +482,14 @@ def title_odds(table: pd.DataFrame) -> tuple[dict[str, str], dict[str, str]]:
             if d > 0 and n_top >= 2:
                 price *= 1 + 0.15 * (n_top - 1)
             price_label = _snap_odds(price)
+        if pl == "Owen":
+            # Fixed at 1/3 to win, whatever the model reckons.
+            odds[pl] = "1/3"
+            continue
         if pl == "Kian":
-            # Fixed at 25/1; show how far that is from where the model prices him.
-            move = round(25 - _odds_to_one(price_label))
-            odds[pl] = "25/1"
+            # Fixed at 33/1; show how far that is from where the model prices him.
+            move = round(33 - _odds_to_one(price_label))
+            odds[pl] = "33/1"
             deltas[pl] = f"{move:+d}"
             continue
         odds[pl] = price_label
@@ -496,7 +501,7 @@ def odds_movement(df: pd.DataFrame, cur_odds: dict[str, str]) -> dict[str, str]:
 
     Compares today's quote with the price implied by the standings *before* the
     most recent played matchday — the bookmaker idiom "shortened 9/1 → 7/1, -2"
-    (in green) or drifted out (red). Reddy and Kian carry fixed joke deltas set
+    (in green) or drifted out (red). Reddy, Kian and Owen carry fixed prices set
     in title_odds and are left untouched; a runner whose price didn't budge (or
     a season with only one matchday played) gets no chip.
     """
@@ -507,7 +512,7 @@ def odds_movement(df: pd.DataFrame, cur_odds: dict[str, str]) -> dict[str, str]:
     prev_odds, _ = title_odds(standings_table(prev, PLAYERS)[0])
     moves: dict[str, str] = {}
     for pl, price in cur_odds.items():
-        if pl in ("Reddy", "Kian") or pl not in prev_odds:
+        if pl in ("Reddy", "Kian", "Owen") or pl not in prev_odds:
             continue
         move = round(_odds_to_one(price) - _odds_to_one(prev_odds[pl]))
         if move:

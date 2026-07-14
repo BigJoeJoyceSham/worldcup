@@ -27,13 +27,14 @@ try:
 except Exception:  # pragma: no cover - fall back to Plotly
     _HAS_ECHARTS = False
 
-# Attribute keys in card/radar order (FUT bottom row reads ACC RES BLD / CON FRM REL).
-ATTRS = ["ACC", "RES", "BLD", "CON", "FRM", "REL"]
+# Attribute keys in card/radar order (FUT bottom row reads ACC RES BLD / VOL FRM REL).
+ATTRS = ["ACC", "RES", "BLD", "VOL", "FRM", "REL"]
 ATTR_HELP = {
     "ACC": "Accuracy — exact-score hit rate",
     "RES": "Results — correct outcome rate (exact or result)",
     "BLD": "Boldness — how often a pick goes against the group's consensus",
-    "CON": "Consistency — steadiness of matchday hauls",
+    "VOL": "Volatility — boom-or-bust matchday hauls rate high; the same "
+           "score every week rates low",
     "FRM": "Form — points over the last 10 matches",
     "REL": "Reliability — predictions submitted",
 }
@@ -94,15 +95,19 @@ def player_stats(df: pd.DataFrame) -> pd.DataFrame:
     g["last10"] = (p[p["match_id"].isin(last_ids)]
                    .groupby("player")["points"].sum()
                    .reindex(g.index).fillna(0).astype(int))
+    g["last5"] = (p[p["match_id"].isin(last_ids.tail(5))]
+                  .groupby("player")["points"].sum()
+                  .reindex(g.index).fillna(0).astype(int))
 
-    # Consistency: low matchday-to-matchday spread = high CON.
+    # Volatility: big matchday-to-matchday spread = high VOL. Descriptive, not
+    # a virtue — the FM Aggression school of attribute.
     g["md_std"] = (p.groupby(["player", "match_day"])["points"].sum()
                    .groupby("player").std().reindex(g.index).fillna(0))
 
     g["ACC"] = _scale(g["acc_rate"], 52, 96)
     g["RES"] = _scale(g["res_rate"], 52, 96)
     g["BLD"] = _scale(g["bold_rate"], 52, 96)
-    g["CON"] = _scale(-g["md_std"], 52, 96)
+    g["VOL"] = _scale(g["md_std"], 52, 96)
     g["FRM"] = _scale(g["last10"], 52, 96)
     g["REL"] = _scale(g["rel_rate"], 52, 96)
     g[ATTRS] = g[ATTRS].round().astype(int)
@@ -112,7 +117,8 @@ def player_stats(df: pd.DataFrame) -> pd.DataFrame:
     # League rank per stat for the bars (1 = best; ties share a rank).
     for col, raw in [("rk_ppg", "ppg"), ("rk_acc", "acc_rate"),
                      ("rk_res", "res_rate"), ("rk_rel", "rel_rate"),
-                     ("rk_bold", "bold_rate"), ("rk_frm", "last10")]:
+                     ("rk_bold", "bold_rate"), ("rk_frm", "last10"),
+                     ("rk_vol", "md_std")]:
         g[col] = g[raw].rank(ascending=False, method="min").astype(int)
     return g
 
@@ -221,17 +227,69 @@ _BEST_TRAIT = {
     "ACC": "Sees it before it happens",
     "RES": "Knows where we're going just not how we're getting there",
     "BLD": "Kenny Cunningham: Either a Maverick or a Wet Brain... hard to know",
-    "CON": "metronomic, steady matchday hauls",
+    "VOL": "Up and down like a fiddlers elbow 🎻",
     "FRM": "flying over the last 10 matches",
 }
 _WORST_TRAIT = {
     "ACC": "A small fat duck 🦆",
     "RES": "Couldn't pick his nose 👃",
     "BLD": "An auld fence sitter 🚧",
-    "CON": "Up and down like a fiddlers elbow 🎻",
+    "VOL": "Metronomic — the same beige haul every week 📠",
     "FRM": "stone useless over the last 10 matches 🪣",
     "REL": "The Sleepy Joe Award 🥇",
 }
+
+
+# Prose fragments for the three-sentence prelude — keyed by whichever
+# attribute tops / props up the radar, same picks as the bullet lines below.
+_SUM_STRENGTH = {
+    "ACC": "nailing scorelines on the head",
+    "RES": "calling the result even when the score won't come",
+    "BLD": "swimming against the crowd",
+    "VOL": "boom-or-bust matchdays",
+    "FRM": "a red-hot recent run",
+}
+_SUM_WEAK = {
+    "ACC": "exact scores are like hen's teeth",
+    "RES": "the results just won't come",
+    "BLD": "there's rarely a pick the room didn't make first",
+    "VOL": "the haul barely moves week to week",
+    "FRM": "recent form is stone cold",
+    "REL": "too many blanks litter the record",
+}
+
+
+def scout_summary(stats: pd.DataFrame, player: str) -> str:
+    """Three-sentence prelude distilling the stats before the bullet lines:
+    standing, profile (standout vs weak attribute), current form."""
+    s = stats.loc[player]
+    n = len(stats)
+    rank, pts = int(s["rank"]), int(s["pts"])
+    if rank == 1:
+        second = int(stats.loc[stats.index != player, "pts"].max())
+        standing = (f"Top of the pile on {pts} points, {pts - second} clear "
+                    f"of the pack at {s['ppg']:.2f} a game.")
+    else:
+        gap = int(stats["pts"].max()) - pts
+        place = "Stone last" if rank == n else f"Sits {_ordinal(rank)}"
+        standing = (f"{place} on {pts} points, {gap} off the leader at "
+                    f"{s['ppg']:.2f} a game.")
+    best = max((a for a in ATTRS if a != "REL"), key=lambda a: int(s[a]))
+    worst = min(ATTRS, key=lambda a: int(s[a]))
+    if int(s[best]) == int(s[worst]):
+        profile = "No standout, no weak spot — the flattest profile going."
+    else:
+        profile = (f"The game is built on {_SUM_STRENGTH[best]}, while "
+                   f"{_SUM_WEAK[worst]}.")
+    rk10 = int(stats["last10"].rank(ascending=False, method="min")[player])
+    rk5 = int(stats["last5"].rank(ascending=False, method="min")[player])
+    # Submitting everything is the base case — only blanks earn a mention.
+    form = (f"Form reads {int(s['last10'])} points from the last {LAST_N} "
+            f"({_ordinal(rk10)}) and {int(s['last5'])} from the last 5 "
+            f"({_ordinal(rk5)})"
+            + ("." if int(s["blanks"]) == 0 else
+               f", with {int(s['blanks'])} blanks along the way."))
+    return f"{standing} {profile} {form}"
 
 
 def scouting_report(df: pd.DataFrame, stats: pd.DataFrame, player: str) -> list[str]:
@@ -314,13 +372,20 @@ def scouting_report(df: pd.DataFrame, stats: pd.DataFrame, player: str) -> list[
             lines.append(f"🥶 No exact in **{drought} games** — "
                          f"Not looking too good")
 
-    # Form vs the field over the shared last-10 window.
-    if s["last10"] == stats["last10"].max() and s["last10"] > 0:
-        lines.append(f"🔥🐐 **On the Goats Milk** — {int(s['last10'])} pts "
-                     f"from the last {LAST_N}.")
-    elif s["last10"] == stats["last10"].min():
-        lines.append(f"🧊 Shitest in the league: **{int(s['last10'])} pts** "
-                     f"from the last {LAST_N}.")
+    # Form vs the field: the hot line fires for whoever tops either shared
+    # window (last 10 or last 5), the cold line for whoever props up either —
+    # both quoting the two hauls with their league ranks.
+    rk10 = int(stats["last10"].rank(ascending=False, method="min")[player])
+    rk5 = int(stats["last5"].rank(ascending=False, method="min")[player])
+    wk10 = int(stats["last10"].rank(method="min")[player])  # 1 = league's worst
+    wk5 = int(stats["last5"].rank(method="min")[player])
+    both = (f"{int(s['last10'])} pts from the last {LAST_N} "
+            f"({_ordinal(rk10)}), {int(s['last5'])} pts from the "
+            f"last 5 ({_ordinal(rk5)}).")
+    if (rk10 == 1 and s["last10"] > 0) or (rk5 == 1 and s["last5"] > 0):
+        lines.append(f"🔥🐐 **On the Goats Milk** — {both}")
+    elif wk10 == 1 or wk5 == 1:
+        lines.append(f"🧊 **Shitest form in the league** — {both}")
 
     banker, bogey = team_form(df, player)
     if banker and banker[1] > 0:
@@ -424,13 +489,17 @@ def _ordinal(n: int) -> str:
     return f"{n}{suffix}"
 
 
+# Labels carry the radar acronym so the bars visibly line up with the
+# attribute profile next door; PPG has no radar twin so goes bare.
 _BAR_ITEMS = [
     ("Points per game", "rk_ppg", "ppg", lambda v: f"{v:.2f}"),
-    ("Exact-score rate", "rk_acc", "acc_rate", lambda v: f"{v:.0%}"),
-    ("Correct-result rate", "rk_res", "res_rate", lambda v: f"{v:.0%}"),
-    ("Form (last 10 pts)", "rk_frm", "last10", lambda v: f"{int(v)}"),
-    ("Boldness", "rk_bold", "bold_rate", lambda v: f"{v:.0%}"),
-    ("Submission rate", "rk_rel", "rel_rate", lambda v: f"{v:.0%}"),
+    ("Exact-score rate (ACC)", "rk_acc", "acc_rate", lambda v: f"{v:.0%}"),
+    ("Correct-result rate (RES)", "rk_res", "res_rate", lambda v: f"{v:.0%}"),
+    ("Form, last 10 pts (FRM)", "rk_frm", "last10", lambda v: f"{int(v)}"),
+    ("Boldness (BLD)", "rk_bold", "bold_rate", lambda v: f"{v:.0%}"),
+    ("Submission rate (REL)", "rk_rel", "rel_rate", lambda v: f"{v:.0%}"),
+    # Matchday-points spread, shown raw (± pts); 1st = swingiest in the league.
+    ("Volatility (VOL)", "rk_vol", "md_std", lambda v: f"±{v:.1f} pts"),
 ]
 
 
@@ -635,23 +704,6 @@ def render(df: pd.DataFrame, players: list[str], cmap: dict[str, str]) -> None:
                    "🟩 exact 🟨 result 🟥 miss ⬜ blank")
         st.markdown(chips_html(form_chips(df, player)), unsafe_allow_html=True)
 
-    # ---- Scouting report --------------------------------------------------- #
-    try:
-        from streamlit_extras.stylable_container import stylable_container
-        card = stylable_container(key="scout_card", css_styles="""
-            {
-                border: 1px solid #E6EAF0;
-                border-left: 6px solid #1E3A5F;
-                border-radius: 14px;
-                padding: 14px 20px;
-                box-shadow: 0 6px 18px rgba(30,58,95,0.07);
-            }""")
-    except Exception:
-        card = st.container(border=True)
-    with card:
-        st.markdown(f"#### 🕵️ Scouting report — {player}")
-        st.markdown("  \n".join(scouting_report(df, stats, player)))
-
     # ---- Attributes: radar + rank bars, with optional rival overlay -------- #
     st.divider()
     cc1, cc2 = st.columns([1, 2])
@@ -690,6 +742,26 @@ def render(df: pd.DataFrame, players: list[str], cmap: dict[str, str]) -> None:
                     f"Tick = {rival}. " if rival else
                     "Rank vs the league per stat — longer bar, higher rank. ")
                    + "Skill rates exclude blank picks.")
+
+    # ---- Scouting report ---------------------------------------------------- #
+    # Sits under the attribute/rank charts so the reader meets the numbers
+    # first and the report reads as their plain-English translation.
+    try:
+        from streamlit_extras.stylable_container import stylable_container
+        card = stylable_container(key="scout_card", css_styles="""
+            {
+                border: 1px solid #E6EAF0;
+                border-left: 6px solid #1E3A5F;
+                border-radius: 14px;
+                padding: 14px 20px;
+                box-shadow: 0 6px 18px rgba(30,58,95,0.07);
+            }""")
+    except Exception:
+        card = st.container(border=True)
+    with card:
+        st.markdown(f"#### 🕵️ Scouting report — {player}")
+        st.markdown(f"*{scout_summary(stats, player)}*")
+        st.markdown("  \n".join(scouting_report(df, stats, player)))
 
     # ---- Tendencies --------------------------------------------------------- #
     st.divider()
