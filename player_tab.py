@@ -231,7 +231,7 @@ _BEST_TRAIT = {
     "FRM": "flying over the last 10 matches",
 }
 _WORST_TRAIT = {
-    "ACC": "A small fat duck 🦆",
+    "ACC": "Should have gone to Specsavers 👓",
     "RES": "Couldn't pick his nose 👃",
     "BLD": "An auld fence sitter 🚧",
     "VOL": "Metronomic — the same beige haul every week 📠",
